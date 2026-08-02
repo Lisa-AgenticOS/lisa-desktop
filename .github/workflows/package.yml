@@ -1,0 +1,50 @@
+# The one gate this repo has: the packages build, their tests pass
+# inside makepkg's check(), and the artifacts exist (lisa-os#171 step 1).
+# On a tag, the packages are attached to a GitHub release — the input
+# lisa-packages indexes into [lisa].
+name: package
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Install build environment
+        run: |
+          pacman -Syu --noconfirm --needed base-devel git glib2 cmake fcitx5 gjs
+          # makepkg refuses to run as root; the checkout is owned by the
+          # runner uid, so hand the tree to a build user wholesale.
+          useradd -m builder
+      - uses: actions/checkout@v5
+      - name: Build packages
+        run: |
+          chown -R builder: .
+          # git archive needs the repo to trust the directory it was
+          # checked out into by a different uid.
+          su builder -c 'git config --global safe.directory "$PWD" && bash build-package.sh out'
+      - name: The artifacts exist and carry both packages
+        run: |
+          ls -l out/
+          test -e out/lisa-desktop-*-any.pkg.tar.zst
+          test -e out/lisa-desktop-ime-*.pkg.tar.zst
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: out/*.pkg.tar.zst
+          if-no-files-found: error
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pacman -S --noconfirm --needed github-cli
+          gh release create "${GITHUB_REF_NAME}" out/*.pkg.tar.zst \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "lisa-desktop packages for the [lisa] repo (built by CI from this tag)"
