@@ -25,6 +25,11 @@ license=(GPL-2.0-only)
 # cmake + fcitx5: the IME addon (PLAN §5.7.3 layer 2, ADR-0007).
 # gjs: check() runs the GJS test suites.
 makedepends=(glib2 cmake fcitx5 gjs)
+# !debug: makepkg's default debug option split a lisa-desktop-debug
+# symbols package out of the IME build and it rode the first v0.1.0
+# release into the [lisa] index as noise. Nobody debugs the addon from
+# stripped distro symbols; they rebuild it.
+options=(!debug)
 source=("$pkgbase-$pkgver.tar.gz")
 sha256sums=('SKIP')
 
