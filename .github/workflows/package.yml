@@ -13,6 +13,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # contents:write for the tag-triggered release step; the default
+    # token is read-only and gh got HTTP 403 on the first try.
+    permissions:
+      contents: write
     container:
       image: archlinux:latest
     steps:
