@@ -45,6 +45,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           pacman -S --noconfirm --needed github-cli
+          # --repo, so gh never consults git: this step runs as root in
+          # a tree chowned to the build user, and root's git refuses
+          # "dubious ownership" — which failed the first v0.1.0 tag run
+          # AFTER the packages had built.
           gh release create "${GITHUB_REF_NAME}" out/*.pkg.tar.zst \
+            --repo "${GITHUB_REPOSITORY}" \
             --title "${GITHUB_REF_NAME}" \
             --notes "lisa-desktop packages for the [lisa] repo (built by CI from this tag)"
