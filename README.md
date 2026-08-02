@@ -14,9 +14,18 @@ own upstream, its own rebase cadence, and its own release channel.
 | `shell/desktop` | The Shell extension that makes GNOME look like Lisa (dock, panel, wordmark) — the code ADR-0038 step 3 absorbs into the fork |
 | `shell/overlay-extension` | The `dev.lisaos.Overlay1` backend + transient prompt overlay |
 | `shell/assistant` | Lisa Assistant — the persistent chat window |
+| `shell/consent` | The `dev.lisaos.Consent1` daemon — the consent surface, split from the model host (ADR-0035 §4) |
+| `shell/settings` | Lisa Settings app |
 | `shell/launcher` | Search-provider launcher surfaces |
 | `shell/ledger-app` | The Ledger viewer |
+| `shell/testing` | The GJS test harness the other surfaces' tests run on |
 | `ime/fcitx5-lisa` | fcitx5 addon: double-Shift summon, everywhere text is typed |
+
+Note on history: commit messages carry `#NNN` issue references from the
+monorepo era. They refer to
+[`lisa-os` issues](https://github.com/Lisa-AgenticOS/lisa-os/issues),
+not to this repo's tracker — GitHub will autolink them to the wrong
+place.
 
 ## How it works
 
