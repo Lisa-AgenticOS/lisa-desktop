@@ -1,0 +1,115 @@
+# The GNOME Shell fork's gate (ADR-0038 step 2).
+#
+# Separate from package.yml because the two have different costs and
+# different blast radii: that one packages JavaScript in seconds, this
+# one compiles a desktop shell. Coupling them would make every change to
+# a shell surface wait for a GNOME Shell build.
+#
+# Three things are asserted, in order, and each is a real failure the
+# step before it cannot catch:
+#   1. it builds        — the pinned tarball, the patch series, meson
+#   2. it does not collide — guards inside the PKGBUILD, plus an
+#                            explicit check that pacman can install it
+#                            alongside stock gnome-shell
+#   3. it is stock      — every UI resource in the fork's libshell is
+#                         byte-for-byte the distribution's
+#   4. it boots         — the shell runs headless, owns org.gnome.Shell
+#                         and reports the pinned version
+#
+# (3) is the acceptance criterion of step 2 stated as a measurement
+# rather than as a promise, and it survives step 2: when the delta stops
+# being empty it prints exactly which interface files the fork owns.
+#
+# (3) is the one that matters. ADR-0038's own argument for the fork is
+# the incident where an extension silently did not load and the desktop
+# was stock GNOME with nobody noticing: "a desktop that fails by looking
+# like something else needs a test that looks".
+name: desktop
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/desktop.yml'
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/desktop.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Install build environment
+        run: |
+          pacman -Syu --noconfirm --needed --disable-download-timeout \
+            base-devel git meson \
+            accountsservice at-spi2-core bash cairo dconf gcr-4 gdk-pixbuf2 gjs \
+            glib2 glibc gnome-autoar gnome-desktop-4 gnome-session \
+            gnome-settings-daemon gnome-shell graphene gsettings-desktop-schemas \
+            gtk4 hicolor-icon-theme ibus json-glib libadwaita libcanberra-pulse \
+            libgcc libgdm libglvnd libgweather-4 libibus libical libnm libnma-gtk4 \
+            libpipewire libpulse libsecret libsoup3 libx11 libxext libxfixes \
+            mutter pango polkit systemd-libs unzip upower webkitgtk-6.0 \
+            asciidoc bash-completion evolution-data-server glib2-devel \
+            gnome-keybindings gobject-introspection python-docutils sassc \
+            dbus python-gobject python-dbusmock
+          # makepkg refuses to run as root; the checkout is owned by the
+          # runner uid, so hand the tree to a build user wholesale.
+          useradd -m builder
+
+      - uses: actions/checkout@v5
+
+      - name: Build the package
+        run: |
+          chown -R builder: .
+          su builder -c 'git config --global safe.directory "$PWD" && bash desktop/build-package.sh out'
+
+      - name: The artifact exists
+        run: |
+          ls -l out/
+          test -e out/lisa-desktop-shell-*.pkg.tar.zst
+
+      # The PKGBUILD's own guards already assert that nothing lands
+      # outside the private prefix. This asserts the consequence pacman
+      # cares about: the package installs on a system that already has
+      # stock gnome-shell, with no file conflicts and no --overwrite.
+      - name: It co-installs with stock gnome-shell
+        run: |
+          pacman -Q gnome-shell
+          pacman -U --noconfirm out/lisa-desktop-shell-*.pkg.tar.zst
+          pacman -Q gnome-shell lisa-desktop-shell
+          test -x /usr/lib/lisa-desktop/bin/gnome-shell
+          test -e /usr/share/wayland-sessions/lisa-desktop.desktop
+          test -e /usr/lib/systemd/user/gnome-session@lisa.target.d/lisa-session.conf
+
+      # The whole of ADR-0038 step 2 in one assertion: the interface the
+      # fork will draw is, resource for resource, the one Arch's
+      # gnome-shell draws. When step 3 lands this step gets
+      # --allow-delta and becomes the fork's change report.
+      - name: Its interface is byte-identical to stock gnome-shell
+        run: python desktop/tools/js-delta.py
+
+      # LISA_SMOKE_MOCK_LOGIND: a job container has no systemd-logind,
+      # and the shell asks logind for the session while building its
+      # LayoutManager — without it, it dies in JavaScript before it
+      # would own a bus name. The mock stands in for the environment;
+      # the binary, the compositor and the JavaScript are the real ones.
+      - name: It boots
+        run: |
+          ver=$(sed -n 's/^pkgver=//p' desktop/PKGBUILD)
+          # Run as a normal user: a compositor started by root in a
+          # container is not the situation this ships into.
+          chmod 0755 /home/builder
+          su builder -c "LISA_SMOKE_MOCK_LOGIND=1 LISA_SMOKE_TIMEOUT=120 bash $PWD/desktop/smoke.sh $ver"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lisa-desktop-shell
+          path: out/*.pkg.tar.zst
+          if-no-files-found: error
