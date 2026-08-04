@@ -149,10 +149,16 @@ jobs:
           # resolve. This sequence exists to test the harder case.
           pacman -Rdd --noconfirm gnome-shell
           pacman -U --noconfirm out/lisa-desktop-shell-*.pkg.tar.zst
-          # Stock is GONE. `pacman -Q <name>` matches package names only,
-          # never provides, so this cannot be satisfied by our own
-          # provides=(gnome-shell) and pass for the wrong reason.
-          if pacman -Q gnome-shell >/dev/null 2>&1; then
+          # Stock is GONE.
+          #
+          # NOT `pacman -Q gnome-shell`: that falls back to
+          # alpm_find_satisfier and answers YES on the strength of our
+          # own provides=(gnome-shell). It reported "still installed"
+          # immediately after -Rdd had removed it — a check that can
+          # only be satisfied by the thing it is supposed to detect the
+          # absence of. Enumerate installed NAMES instead.
+          pacman -Qq > installed.txt
+          if grep -qx gnome-shell installed.txt; then
             echo "FAIL: stock gnome-shell is still installed" >&2
             exit 1
           fi
