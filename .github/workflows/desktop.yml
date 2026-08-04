@@ -114,6 +114,40 @@ jobs:
       # answers to its name, and nothing that depended on it dangles.
       - name: It replaces stock gnome-shell
         run: |
+          # First, the positive control for conflicts=: with stock
+          # gnome-shell installed, this install MUST be refused. A
+          # `conflicts` line that pacman does not enforce is a line
+          # nobody would notice being wrong, and the whole replacement
+          # story rests on it.
+          #
+          # (`--noconfirm` answers the "Remove gnome-shell? [y/N]"
+          # question with its default, N — so the refusal here is
+          # pacman declining to guess, which is exactly right for a
+          # non-interactive run.)
+          if pacman -U --noconfirm out/lisa-desktop-shell-*.pkg.tar.zst > conflict.log 2>&1; then
+            echo "FAIL: pacman installed this alongside stock gnome-shell." >&2
+            echo "      conflicts=(gnome-shell) is not being enforced." >&2
+            cat conflict.log >&2
+            exit 1
+          fi
+          if ! grep -q 'are in conflict' conflict.log; then
+            echo "FAIL: the install was refused, but not for the conflict." >&2
+            cat conflict.log >&2
+            exit 1
+          fi
+          echo "conflicts=(gnome-shell) is enforced:"
+          grep 'are in conflict' conflict.log
+
+          # Now the swap. -Rdd: stock gnome-shell is a dependency of
+          # other installed packages and this is precisely the moment
+          # its dependants have nothing providing it — the next command
+          # fixes that, and `pacman -Dk` below proves it did.
+          #
+          # The IMAGE never takes this path: mkosi installs into an
+          # empty root where stock gnome-shell was never present, so
+          # pacman simply installs our package with no conflict to
+          # resolve. This sequence exists to test the harder case.
+          pacman -Rdd --noconfirm gnome-shell
           pacman -U --noconfirm out/lisa-desktop-shell-*.pkg.tar.zst
           # Stock is GONE. `pacman -Q <name>` matches package names only,
           # never provides, so this cannot be satisfied by our own
