@@ -1,0 +1,24 @@
+# The OnFailure target of lisa-desktop@.service. Copied from
+# gnome-shell's org.gnome.Shell-disable-extensions.service (50.3) with
+# only the Description changed.
+#
+# ConditionPathExists is deliberately still the *gnome-shell* runtime
+# flag: the file is written by the shell binary itself, and that name is
+# compiled into upstream C. Changing it would mean patching the source,
+# which step 2 does not do — so the fork and the stock shell raise the
+# same flag, and each has its own unit watching for it.
+[Unit]
+Description=Disable Lisa Desktop extensions after failure
+# Note that this unit must not conflict with anything, and must
+# be able to run in parallel with the gnome-session-shutdown.target.
+DefaultDependencies=no
+
+# We want to disable extensions only if the shell has flagged the
+# extensions to be a likely cause of trouble.
+ConditionPathExists=%t/gnome-shell-disable-extensions
+
+[Service]
+Type=simple
+# Disable extensions
+ExecStart=gsettings set org.gnome.shell disable-user-extensions true
+Restart=no

@@ -1,0 +1,49 @@
+# Lisa Desktop's shell unit. Structurally identical to gnome-shell's own
+# org.gnome.Shell@.service (50.3) — every [Unit] ordering and failure
+# relationship is copied unchanged, because the session lifecycle is
+# behaviour and step 2 changes no behaviour. Three lines differ, and all
+# three are consequences of the private prefix, not of a design choice:
+# the unit name, the ExecStart path, and GSETTINGS_SCHEMA_DIR.
+[Unit]
+Description=Lisa Desktop
+OnFailure=lisa-desktop-disable-extensions.service gnome-session-shutdown.target
+OnFailureJobMode=replace-irreversibly
+CollectMode=inactive-or-failed
+RefuseManualStart=on
+RefuseManualStop=on
+
+After=gnome-session-manager.target
+
+Requisite=gnome-session-initialized.target
+PartOf=gnome-session-initialized.target
+Before=gnome-session-initialized.target
+
+AssertEnvironment=XDG_SESSION_TYPE=wayland
+
+[Service]
+Slice=session.slice
+Type=notify
+# GSETTINGS_SCHEMA_DIR is prepended to GLib's default schema source
+# chain, it does not replace it — so the shell reads the org.gnome.shell
+# schema that was built with this binary, and everything else (the
+# desktop schemas, extensions' schemas in /usr/share) still resolves.
+# Without it the fork would silently read stock gnome-shell's schemas,
+# which happens to work only while both are installed.
+Environment=GSETTINGS_SCHEMA_DIR=/usr/lib/lisa-desktop/share/glib-2.0/schemas
+# The binary keeps its upstream name inside the private prefix. Renaming
+# it is a source change, and step 2 has none; the full path is
+# unambiguous in `ps` and in journal entries.
+ExecStart=/usr/lib/lisa-desktop/bin/gnome-shell --mode=%i
+# Exit code 1 means we are probably *not* dealing with an extension failure
+SuccessExitStatus=1
+
+# unset some environment variables that were set by the shell and won't work now that the shell is gone
+ExecStopPost=-systemctl --user unset-environment GNOME_SETUP_DISPLAY WAYLAND_DISPLAY DISPLAY XAUTHORITY
+
+# On wayland we cannot restart
+Restart=no
+# Kill any stubborn child processes after this long
+TimeoutStopSec=5
+
+# Lower down gnome-shell's OOM score to avoid being killed by OOM-killer too early
+OOMScoreAdjust=-1000

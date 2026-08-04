@@ -1,0 +1,20 @@
+[Desktop Entry]
+Name=Lisa Desktop
+Comment=This session logs you into Lisa Desktop
+Exec=/usr/bin/gnome-session --session=lisa
+# Points at the fork's own binary, not gnome-session's: if this package
+# is removed and the file somehow survives, GDM must stop offering the
+# session rather than offer one that cannot start.
+TryExec=/usr/lib/lisa-desktop/bin/gnome-shell
+Type=Application
+# DesktopNames=GNOME is deliberate and is NOT a leftover.
+# XDG_CURRENT_DESKTOP is read by xdg-desktop-portal to pick a backend, by
+# gsettings-desktop-schemas for its per-desktop defaults, and by every
+# .desktop file carrying OnlyShowIn/NotShowIn. Changing it here changes
+# the behaviour of software that has never heard of Lisa, which is
+# exactly what step 2 must not do. The visible name is Lisa Desktop; the
+# compatibility identity stays GNOME until something concrete depends on
+# it not being GNOME.
+DesktopNames=GNOME
+X-GDM-SessionRegisters=true
+X-GDM-CanRunHeadless=true

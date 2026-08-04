@@ -1,0 +1,272 @@
+# Maintainer: Lisa OS project <https://github.com/Lisa-AgenticOS/lisa-desktop>
+#
+# Lisa Desktop — the GNOME Shell fork (ADR-0038 step 2).
+#
+# THIS FILE IS THE PIN. pkgver below is the upstream GNOME Shell release
+# this package is built from, and the first entry of sha256sums is the
+# hash of that release's tarball. No other file in this repository names
+# an upstream version; tools/rebase.sh reads and rewrites these two lines
+# and nothing else.
+#
+# Derived from Arch's gnome-shell PKGBUILD (1:50.3-1) — same dependency
+# set, same meson flags, same compiler flags — so that what we build is
+# the same code the reference device already runs. Two deliberate
+# differences, both explained where they occur: the source is the signed
+# release tarball rather than a git tag, and the install prefix is
+# private (/usr/lib/lisa-desktop) so this package cannot collide with
+# stock gnome-shell.
+#
+# At this pin the Lisa delta is EMPTY. patches/ holds exactly one patch
+# and it is not ours: Arch's one-line libical-4 build fix, without which
+# upstream 50.3 does not compile against the libical the device ships.
+# That is the acceptance criterion of step 2 — the fork is byte-identical
+# to stock because there is nothing in it that is not stock.
+
+pkgname=lisa-desktop-shell
+pkgver=50.3
+pkgrel=1
+pkgdesc="Lisa Desktop: the GNOME Shell fork, as a parallel-installable session"
+# x86_64 only, and only because that is the only architecture this has
+# been built on. ADR-0021's aarch64 lane is unproven here; widen this
+# line when a build exists, not before.
+arch=(x86_64)
+url="https://github.com/Lisa-AgenticOS/lisa-desktop"
+# GPL-3.0-or-later, NOT the repository's GPL-2.0-only (ADR-0005): the
+# vendored source is GNOME Shell, which is GPL-3.0-or-later, and a
+# derived work cannot be relicensed downwards. Upstream's COPYING is
+# installed next to ours for the same reason.
+license=(GPL-3.0-or-later)
+depends=(
+  # Arch's gnome-shell 1:50.3-1 runtime dependency set, verbatim.
+  accountsservice
+  at-spi2-core
+  bash
+  cairo
+  dconf
+  gcr-4
+  gdk-pixbuf2
+  gjs
+  glib2
+  glibc
+  gnome-autoar
+  gnome-desktop-4
+  gnome-session
+  gnome-settings-daemon
+  graphene
+  gsettings-desktop-schemas
+  gtk4
+  hicolor-icon-theme
+  ibus
+  json-glib
+  libadwaita
+  libcanberra-pulse
+  libgcc
+  libgdm
+  libglvnd
+  libgweather-4
+  libibus
+  libical
+  libnm
+  libnma-gtk4
+  libpipewire
+  libpulse
+  libsecret
+  libsoup3
+  libx11
+  libxext
+  libxfixes
+  libmutter-18.so
+  mutter
+  pango
+  polkit
+  systemd-libs
+  unzip
+  upower
+  webkitgtk-6.0
+  # TRANSITIONAL, and the one honest wart in this package. GNOME Shell
+  # ships D-Bus *activatable* helpers — CalendarServer, Notifications,
+  # Screencast, ScreenSaver, Extensions — whose .service files must live
+  # in a directory the session bus scans (/usr/share/dbus-1/services).
+  # A private prefix cannot claim that namespace without file-conflicting
+  # with stock gnome-shell, and the names those services are requested
+  # under (org.gnome.Shell.*) are baked into the shell's JS, so renaming
+  # them is a source change and therefore step 3, not step 2. While the
+  # pin is 50.3 the stock copies are the same code, so behaviour is
+  # identical; this line makes that assumption a dependency instead of a
+  # hope. Removing it is part of absorbing the extensions (ADR-0038 §3).
+  gnome-shell
+)
+makedepends=(
+  asciidoc
+  bash-completion
+  evolution-data-server
+  git
+  glib2-devel
+  gnome-keybindings
+  gobject-introspection
+  meson
+  python-docutils
+  sassc
+)
+optdepends=(
+  'gnome-control-center: System settings'
+  'gnome-bluetooth-3.0: Bluetooth support'
+  'gst-plugin-pipewire: Screen recording'
+  'gst-plugins-good: Screen recording'
+  'power-profiles-daemon: Power profile switching'
+  'switcheroo-control: Multi-GPU support'
+)
+# !debug: consistent with this repo's other packages — a stray
+# -debug split package is index noise nobody consumes.
+options=(!debug)
+
+# Two sources, and the split matters:
+#   [0] pristine upstream, fetched from GNOME's release server and
+#       verified against the sha256 published beside it. Arch builds
+#       from a git tag instead because GNOME Shell's tags carry SSH
+#       signatures makepkg cannot verify; a hash of an immutable
+#       artefact is a stronger pin than an unverifiable tag.
+#   [1] a git archive of THIS repository at HEAD, produced by
+#       build-package.sh. SKIP because it is generated from committed
+#       history at build time — hashing it here would be hashing a file
+#       against itself. It carries patches/, session/ and the LICENSE.
+source=(
+  "https://download.gnome.org/sources/gnome-shell/${pkgver%%.*}/gnome-shell-$pkgver.tar.xz"
+  "lisa-desktop-tree.tar.gz"
+)
+sha256sums=(
+  '450458c44a26d25a9b84288e12b9005d4c5c44648cfc6b790be19a05de7f1735'
+  'SKIP'
+)
+
+_prefix=/usr/lib/lisa-desktop
+
+prepare() {
+  # --- The vendoring seam -------------------------------------------
+  # Upstream becomes commit 1 of a throwaway git repository inside
+  # $srcdir; our delta becomes commits 2..n, applied with `git am
+  # --3way`. tools/apply-series.sh does it, and is the only place that
+  # does it — the rebase tool and CI call the same script, so the build
+  # and the rebase cannot disagree about what the fork is.
+  #
+  # Why this and not the anchored sed/awk of gnome-control-center-lisa:
+  # a patch hunk carries its own context and the blob hash of the file
+  # it was cut from, so the applier itself refuses a hunk whose
+  # surroundings moved. There is no third outcome. `sed -i s/x/y/` that
+  # matches nothing exits 0 and silently ships the unpatched file, which
+  # is why that PKGBUILD needs nine hand-written grep guards — one per
+  # edit, each added by somebody remembering to. Here the guard is the
+  # applier: it exists for every hunk, for free, forever.
+  bash "$srcdir/lisa/desktop/tools/apply-series.sh" \
+    "$srcdir/gnome-shell-$pkgver" \
+    "$srcdir/lisa/desktop/patches" \
+    "gnome-shell $pkgver (pristine upstream release tarball)"
+}
+
+build() {
+  local meson_options=(
+    # The private prefix is the entire collision-avoidance strategy, and
+    # it is a packaging decision, not a source change: every installed
+    # path in this project derives from prefix (bindir, libdir,
+    # libexecdir, datadir, pkgdatadir, pkglibdir, the systemd user unit
+    # dir and the gnome-control-center keybindings dir all resolve
+    # through it), and the binary compiles its own datadir/typelibdir
+    # into itself, so the result is self-consistent with zero patches.
+    --prefix="$_prefix"
+    --sysconfdir=/etc
+    --localstatedir=/var
+    # Arch's flags. gtk_doc is the one deviation: Arch builds the API
+    # reference into a gnome-shell-docs package we do not ship, and
+    # building it would pull the gi-docgen wrap over the network.
+    # Documentation is not behaviour.
+    -D gtk_doc=false
+    -D tests=false
+  )
+
+  # Byte-for-byte the same code generation as Arch's gnome-shell.
+  CFLAGS="${CFLAGS/-O2/-O3} -fno-semantic-interposition"
+  LDFLAGS+=" -Wl,-Bsymbolic-functions"
+
+  # The release tarball already contains gvc, libshew, jasmine-gjs and
+  # the two extensions subprojects as real directories, so nothing is
+  # fetched at build time; --wrap-mode=nodownload (from arch-meson)
+  # turns a missing one into an error rather than a silent download.
+  arch-meson "gnome-shell-$pkgver" build "${meson_options[@]}"
+
+  # arch-meson passes --prefix /usr of its own; ours is appended after
+  # it and must be the one that takes effect. Verified from meson's own
+  # introspection data rather than from the human-readable table, whose
+  # column layout is not a stable interface. The collision guards in
+  # package() would also catch this, but only after a full compile.
+  python -c 'import json,sys; d=json.load(open("build/meson-info/intro-buildoptions.json")); v=[o["value"] for o in d if o["name"]=="prefix"][0]; sys.exit(0 if v==sys.argv[1] else print(f"meson prefix is {v!r}, expected {sys.argv[1]!r} — this build would collide with gnome-shell") or 1)' "$_prefix"
+
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir"
+
+  # meson skips gnome.post_install() when DESTDIR is set, so the private
+  # schema directory arrives with .xml files and no gschemas.compiled.
+  # GSETTINGS_SCHEMA_DIR in the unit would then point at a directory
+  # GLib finds nothing in, and the shell would silently fall through to
+  # stock gnome-shell's schemas — working, and wrong, and only for as
+  # long as gnome-shell stays installed. Compile them here.
+  glib-compile-schemas "$pkgdir$_prefix/share/glib-2.0/schemas"
+  test -s "$pkgdir$_prefix/share/glib-2.0/schemas/gschemas.compiled" \
+    || { echo "the private gschemas did not compile" >&2; return 1; }
+
+  # --- Collision guard, part 1 --------------------------------------
+  # Everything the upstream build installs must land inside the private
+  # prefix. This is a set check over the whole payload, not a grep for
+  # the paths we happened to think of: if a future upstream release adds
+  # an install_dir that escapes prefix, the build stops here instead of
+  # shipping a package that overwrites a gnome-shell file.
+  local stray
+  stray=$(cd "$pkgdir" && find . -mindepth 1 \( -type f -o -type l \) -printf '%P\n' \
+            | grep -v "^${_prefix#/}/" || true)
+  if [ -n "$stray" ]; then
+    echo "upstream installed outside $_prefix:" >&2
+    echo "$stray" >&2
+    return 1
+  fi
+
+  cd "$srcdir/lisa"
+
+  # --- The session ---------------------------------------------------
+  # Four files, all of them ours, none of them a copy of a gnome-shell
+  # file with a word changed. Together they are the whole difference
+  # between "a shell binary exists" and "GDM offers Lisa Desktop".
+  install -Dm644 desktop/session/lisa-desktop.desktop \
+    "$pkgdir/usr/share/wayland-sessions/lisa-desktop.desktop"
+  install -Dm644 desktop/session/lisa.session \
+    "$pkgdir/usr/share/gnome-session/sessions/lisa.session"
+  install -Dm644 desktop/session/lisa-desktop@.service \
+    "$pkgdir/usr/lib/systemd/user/lisa-desktop@.service"
+  install -Dm644 desktop/session/lisa-desktop-disable-extensions.service \
+    "$pkgdir/usr/lib/systemd/user/lisa-desktop-disable-extensions.service"
+  install -Dm644 desktop/session/lisa-session.conf \
+    "$pkgdir/usr/lib/systemd/user/gnome-session@lisa.target.d/lisa-session.conf"
+
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$srcdir/gnome-shell-$pkgver/COPYING" \
+    "$pkgdir/usr/share/licenses/$pkgname/COPYING.gnome-shell"
+
+  # --- Collision guard, part 2 --------------------------------------
+  # Outside the private prefix, every path this package owns must have a
+  # Lisa-named component — the file itself, or a directory that is ours
+  # (/usr/share/licenses/lisa-desktop-shell/, gnome-session@lisa.target.d/).
+  # Same reasoning as part 1: a property of every file, checked, rather
+  # than a list of the files somebody remembered to think about.
+  local shared
+  shared=$(cd "$pkgdir" && find . -mindepth 1 \( -type f -o -type l \) -printf '%P\n' \
+             | grep -v "^${_prefix#/}/" \
+             | grep -v lisa || true)
+  if [ -n "$shared" ]; then
+    echo "these paths are in a shared namespace but nothing about them says Lisa:" >&2
+    echo "$shared" >&2
+    return 1
+  fi
+}
+
+# vim:set sw=2 sts=-1 et:
