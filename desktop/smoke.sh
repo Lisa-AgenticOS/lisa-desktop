@@ -41,7 +41,7 @@ if [ "${1:-}" = "--inner" ]; then
     # the same file, and a truncation here erases the evidence of
     # whatever went wrong before the shell even started.
     "$LISA_SMOKE_BIN" --headless --virtual-monitor 1280x720 --mode=user \
-        $LISA_SMOKE_ARGS >>"$log" 2>&1 &
+        ${LISA_SMOKE_ARGS:-} >>"$log" 2>&1 &
     shell_pid=$!
 
     prop() {
