@@ -16,8 +16,9 @@
 # reference device and it has to stay bootable.
 #
 # Env:
-#   LISA_DESKTOP_PREFIX     where the fork is installed (default
-#                           /usr/lib/lisa-desktop)
+#   LISA_DESKTOP_BIN        the shell binary to boot (default
+#                           /usr/bin/gnome-shell -- Lisa Desktop
+#                           replaces gnome-shell, so that path is ours)
 #   LISA_SMOKE_MOCK_LOGIND  1 to stand up a private system bus with a
 #                           mock logind. Needed in a container, which
 #                           has no systemd-logind; the shell asks it for
@@ -28,10 +29,9 @@
 #   LISA_SMOKE_TIMEOUT      seconds to wait for the bus name (default 60)
 set -euo pipefail
 
-prefix=${LISA_DESKTOP_PREFIX:-/usr/lib/lisa-desktop}
+bin=${LISA_DESKTOP_BIN:-/usr/bin/gnome-shell}
 want_version=${1:-}
 timeout=${LISA_SMOKE_TIMEOUT:-60}
-bin="$prefix/bin/gnome-shell"
 
 if [ "${1:-}" = "--inner" ]; then
     # Inside dbus-run-session: a private session bus exists.
@@ -150,7 +150,6 @@ set +e
 XDG_RUNTIME_DIR="$run" \
 XDG_SESSION_TYPE=wayland \
 XDG_CURRENT_DESKTOP=GNOME \
-GSETTINGS_SCHEMA_DIR="$prefix/share/glib-2.0/schemas" \
 LISA_SMOKE_BIN="$bin" \
 LISA_SMOKE_LOG="$log" \
 LISA_SMOKE_ARGS="${LISA_SMOKE_ARGS:-}" \

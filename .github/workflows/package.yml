@@ -53,7 +53,17 @@ jobs:
           # a tree chowned to the build user, and root's git refuses
           # "dubious ownership" — which failed the first v0.1.0 tag run
           # AFTER the packages had built.
-          gh release create "${GITHUB_REF_NAME}" out/*.pkg.tar.zst \
-            --repo "${GITHUB_REPOSITORY}" \
-            --title "${GITHUB_REF_NAME}" \
-            --notes "lisa-desktop packages for the [lisa] repo (built by CI from this tag)"
+          #
+          # View-or-create, then upload: desktop.yml attaches the shell
+          # package to this same release. `gh release create` on a tag
+          # that already has a release fails, and whichever job got there
+          # second would lose its asset — this job takes seconds and that
+          # one takes most of an hour, so the order is not ours to
+          # choose. Neither side assumes it is the creator.
+          gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 \
+            || gh release create "${GITHUB_REF_NAME}" \
+                 --repo "${GITHUB_REPOSITORY}" \
+                 --title "${GITHUB_REF_NAME}" \
+                 --notes "lisa-desktop packages for the [lisa] repo (built by CI from this tag)"
+          gh release upload "${GITHUB_REF_NAME}" out/*.pkg.tar.zst \
+            --repo "${GITHUB_REPOSITORY}" --clobber

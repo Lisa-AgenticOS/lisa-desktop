@@ -1,9 +1,15 @@
 # Lisa Desktop's shell unit. Structurally identical to gnome-shell's own
 # org.gnome.Shell@.service (50.3) — every [Unit] ordering and failure
 # relationship is copied unchanged, because the session lifecycle is
-# behaviour and step 2 changes no behaviour. Three lines differ, and all
-# three are consequences of the private prefix, not of a design choice:
-# the unit name, the ExecStart path, and GSETTINGS_SCHEMA_DIR.
+# behaviour and step 2 changes no behaviour. Exactly ONE line differs
+# from upstream's: the Description. The unit name is the second
+# difference and it is the reason this file exists at all — it is what
+# gnome-session@lisa.target.d/lisa-session.conf pulls in, and it is what
+# the journal says when the desktop dies.
+#
+# This package installs upstream's org.gnome.Shell@.service too (it is
+# part of the payload, unmodified). Both units start the same binary;
+# only one of them is ever pulled in by a session target.
 [Unit]
 Description=Lisa Desktop
 OnFailure=lisa-desktop-disable-extensions.service gnome-session-shutdown.target
@@ -23,17 +29,21 @@ AssertEnvironment=XDG_SESSION_TYPE=wayland
 [Service]
 Slice=session.slice
 Type=notify
-# GSETTINGS_SCHEMA_DIR is prepended to GLib's default schema source
-# chain, it does not replace it — so the shell reads the org.gnome.shell
-# schema that was built with this binary, and everything else (the
-# desktop schemas, extensions' schemas in /usr/share) still resolves.
-# Without it the fork would silently read stock gnome-shell's schemas,
-# which happens to work only while both are installed.
-Environment=GSETTINGS_SCHEMA_DIR=/usr/lib/lisa-desktop/share/glib-2.0/schemas
-# The binary keeps its upstream name inside the private prefix. Renaming
-# it is a source change, and step 2 has none; the full path is
-# unambiguous in `ps` and in journal entries.
-ExecStart=/usr/lib/lisa-desktop/bin/gnome-shell --mode=%i
+# NO GSETTINGS_SCHEMA_DIR. The schemas this binary was built with are
+# the ones at /usr/share/glib-2.0/schemas, because that is where this
+# package installs them — and that directory is also where lisa-shell's
+# 10_lisa-shell.gschema.override lands, so the compiled default of
+# org.gnome.shell enabled-extensions is the Lisa one.
+#
+# The private-prefix build DID set this variable, and it broke exactly
+# that: GSETTINGS_SCHEMA_DIR takes precedence over the XDG chain for
+# every schema it contains, so org.gnome.shell resolved from the private
+# copy, which no override had ever been compiled into. The extensions
+# would not have been enabled and nothing would have said so.
+#
+# The binary keeps its upstream name and path: this package IS
+# gnome-shell (provides/conflicts), so /usr/bin/gnome-shell is ours.
+ExecStart=/usr/bin/gnome-shell --mode=%i
 # Exit code 1 means we are probably *not* dealing with an extension failure
 SuccessExitStatus=1
 

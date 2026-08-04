@@ -12,8 +12,8 @@ touches the other.
 ## What it does
 
 Builds `lisa-desktop-shell`: GNOME Shell, pinned at a verified upstream
-release, built under Lisa's own name into a private prefix, plus the
-five files that make it a selectable session.
+release, built under Lisa's own name **in place of** the `gnome-shell`
+package, plus the five files that make it a selectable session.
 
 At this pin **the Lisa delta is empty**. That is the point of ADR-0038
 step 2, not a stage we have not reached yet: the milestone is "can we
@@ -121,33 +121,73 @@ Lisa's own delta sorts after them.** `git format-patch` renumbers on
 every rebase, so the boundary is documented here and in each patch's
 own commit message rather than encoded in filenames.
 
-### Parallel install: a private prefix, and no source changes
+### Replacing gnome-shell: the stock prefix, and no source changes
 
-The package installs the entire upstream build under
-`/usr/lib/lisa-desktop`. Nothing else about the build is altered.
+The package installs the upstream build at `/usr`, exactly where
+`gnome-shell` installs it, and declares:
 
-That works because every installed path in GNOME Shell's meson derives
-from `prefix` — `bindir`, `libdir`, `libexecdir`, `datadir`,
-`pkgdatadir`, `pkglibdir`, the systemd user unit directory (it is read
-from `systemd.pc` but re-evaluated with our prefix) and even the
-gnome-control-center keybindings directory. The binary compiles its own
-`datadir`, typelib directory and pkglibdir into itself
-(`-DSHELL_TYPELIB_DIR`, `-DGNOME_SHELL_PKGLIBDIR`) and sets an
-`install_rpath` covering both, so a relocated build is self-consistent
-with **zero patches**. Separation is a packaging decision; the source
-stays byte-identical, which is the acceptance criterion.
+```
+provides=("gnome-shell=1:${pkgver}-${pkgrel}")
+conflicts=(gnome-shell)
+```
 
-Two guards in `package()` keep it that way, and both are set checks over
-the whole payload rather than a list of paths somebody thought of:
+so pacman removes the stock package and every dependency that names
+`gnome-shell` is satisfied by this one. Nothing else about the build is
+altered — the source is still byte-identical, which is the acceptance
+criterion.
 
-1. everything the upstream build installs must land inside the private
-   prefix — if a future release adds an install directory that escapes,
-   the build stops instead of overwriting a `gnome-shell` file;
-2. every path this package owns *outside* the private prefix must have
-   `lisa` in its basename.
+**This used to be a private prefix (`/usr/lib/lisa-desktop`), and the
+reasons it is not any more are worth keeping**, because they are the
+argument for this shape:
 
-Five files live outside the prefix, and together they are the whole
-difference between "a binary exists" and "GDM offers Lisa Desktop":
+- The shell's **D-Bus-activatable helpers** — `org.gnome.Shell.Extensions`,
+  `.Notifications`, `.Screencast`, `org.gnome.ScreenSaver`,
+  `.CalendarServer` — install their `.service` files into
+  `$datadir/dbus-1/services`. At a private prefix that is a directory
+  the session bus never scans, which is why the package carried a
+  transitional `depends=(gnome-shell)` to borrow stock's copies. At
+  `/usr` they are simply ours, with nothing else claiming the names.
+- The private prefix needed `GSETTINGS_SCHEMA_DIR` in the shell's unit,
+  **and that silently broke the Lisa extensions**. `GSETTINGS_SCHEMA_DIR`
+  takes precedence over the XDG chain for every schema it contains;
+  `org.gnome.shell` is one of them; and `lisa-shell`'s
+  `10_lisa-shell.gschema.override` — the file that sets
+  `enabled-extensions` — is compiled into `/usr/share/glib-2.0/schemas`,
+  which the private copy shadowed. Measured, not theorised: with the
+  variable set, `gsettings get org.gnome.shell enabled-extensions`
+  returns `[]`; without it, the override's value. The desktop would have
+  booted looking like stock GNOME with none of Lisa's surfaces in it,
+  and nothing would have said so.
+- `/usr/share/gnome-shell/extensions`, `/usr/share/applications` and
+  `/etc/dconf/db/local.d` were fine either way — the shell scans
+  `GLib.get_system_data_dirs()` for extensions (`js/misc/fileUtils.js`,
+  `collectFromDatadirs`), `Gio.AppInfo` reads XDG_DATA_DIRS, and dconf
+  is a settings *backend* that no prefix can move. But "fine for three
+  of five" is exactly the class of defect this project keeps producing.
+
+Nothing is co-installed, so none of the private prefix's cost buys
+anything. The fallback if this shell does not start is the previous A/B
+root slot (ADR-0001), and behind that the dd-able USB image — not a
+second desktop on the same disk.
+
+Two guards in `package()` still keep the payload honest, and both are
+set checks computed from the payload rather than a list of paths
+somebody thought of:
+
+1. the set of paths this package adds to what `meson install` produced
+   must equal, exactly, seven paths: the five session files listed
+   below plus `usr/share/licenses/lisa-desktop-shell/{LICENSE,
+   COPYING.gnome-shell}`. An extra file is
+   as much a failure as a missing one, because at this prefix every path
+   we add is a path stock `gnome-shell` did not have;
+2. every one of those added paths must have `lisa` in it.
+
+CI adds the two claims `package()` cannot make about itself: that
+`pacman -Dk` finds no unsatisfied dependency after stock `gnome-shell`
+is removed, and that no path stock owned went missing.
+
+Five of those seven are the whole difference between "a binary exists"
+and "GDM offers Lisa Desktop":
 
 | File | Why |
 |---|---|
@@ -168,7 +208,7 @@ GNOME until something concrete needs it not to be.
 ### Measuring "byte-identical"
 
 ```
-python desktop/tools/js-delta.py
+python desktop/tools/js-delta.py OURS.so STOCK.so
 ```
 
 The acceptance criterion of step 2 is not a promise anyone should have
@@ -183,17 +223,24 @@ what each registered, and diffs the hashes:
 :: identical — the fork's user interface is byte-for-byte the distribution's
 ```
 
-The comparison is made modulo the install prefix. GNOME Shell compiles
-`LOCALEDIR`, `LIBEXECDIR` and `PKGDATADIR` into `js/misc/config.js`, so
-that one resource genuinely differs — by exactly those three constants
-and nothing else, which was checked by hand the first time the tool went
-red. Rather than excusing the whole file (which would hide a real change
-made inside it), the fork's bytes have the relocation undone before
-hashing.
+Both libraries must be named. At the shared prefix the fork and stock
+occupy the same path, so a default argument would compare the installed
+library with itself and report "identical" having inspected nothing —
+the tool refuses same-file input and refuses to run with no arguments.
+CI saves the distribution's `libshell-18.so` aside *before* installing
+this package, which is the only moment both exist.
 
-That first red run is also the tool's positive control: on 197
-resources it found the one that differed, and it found it by three
-lines.
+The comparison used to be made "modulo the install prefix", because
+GNOME Shell compiles `LOCALEDIR`, `LIBEXECDIR` and `PKGDATADIR` into
+`js/misc/config.js` and the private-prefix build genuinely differed in
+that one resource. **That allowance is gone**, and its removal made the
+assertion strictly stronger: at `/usr` those constants hold the same
+strings stock's do, so nothing is excused and no substitution can mask a
+change.
+
+The first red run is the tool's positive control: on 197 resources it
+found the one that differed under the old prefix, and it found it by
+three lines.
 
 When the delta stops being empty at step 3, this becomes the fork's
 change report — run it with `--allow-delta` and it prints exactly which
@@ -210,7 +257,7 @@ Starts the shell as a headless display server on a private session bus
 and asks it over D-Bus what it is:
 
 ```
-:: booting /usr/lib/lisa-desktop/bin/gnome-shell (headless, private bus)
+:: booting /usr/bin/gnome-shell (headless, private bus)
 ShellVersion=50.3
 Mode=user
 :: Lisa Desktop booted, owned org.gnome.Shell, and reported 50.3 in mode user
@@ -296,15 +343,19 @@ step 4 (the prompt in the dock) are where the delta stops being empty.
 
 Stated as of this pin, and only what has actually been run:
 
-- **Proven, by running it:** the package builds from the pinned tarball;
-  the series applies; nothing installs outside the private prefix;
-  `pacman -U` installs it on a system that already has stock
-  gnome-shell, with no file conflicts; its 197 UI resources are
-  byte-identical to Arch's `gnome-shell` 1:50.3-1; and the shell boots
-  headless, owns `org.gnome.Shell` and reports 50.3 in mode `user`. CI
-  runs all of it on every push. `smoke.sh` has been checked against
-  three deliberate failures — wrong expected version, missing binary,
-  a shell that cannot start — and reports each one correctly.
+- **Proven by CI, on every push:** the package builds from the pinned
+  tarball; the series applies; what the package adds to upstream's
+  payload is exactly the seven named files; `pacman -U` **replaces**
+  stock `gnome-shell` (it is gone afterwards, `pacman -T gnome-shell`
+  is satisfied by `provides=`, and `pacman -Dk` reports no unsatisfied
+  dependency anywhere); no path stock owned went missing; the five
+  `org.gnome.Shell.*` activatable services are ours; its 197 UI
+  resources are byte-identical to Arch's `gnome-shell` 1:50.3-1 with no
+  prefix allowance; and the shell boots headless, owns
+  `org.gnome.Shell` and reports 50.3 in mode `user`. `smoke.sh` has
+  been checked against three deliberate failures — wrong expected
+  version, missing binary, a shell that cannot start — and reports each
+  one correctly.
 - **Proven on the reference device, without installing anything:** all
   134 shared libraries the fork links resolve on the iMac running Lisa
   OS 20260804.76, and it binds the same `libmutter-18.so.0` as the
@@ -312,28 +363,32 @@ Stated as of this pin, and only what has actually been run:
   `/var/tmp/lisa-desktop-stage` for that check; nothing was installed
   and nothing in `/usr` was touched.
 - **Not proven: a real login.** Nobody has selected "Lisa Desktop" at a
-  GDM greeter and got a desktop. The reference iMac runs an immutable
-  A/B image with no package manager on it, so this package cannot be
-  installed there without building it into an image — which is
-  `lisa-os`'s side of the work, not this repo's. Until that happens,
-  "boots" means what `smoke.sh` proves and no more. In particular
-  nothing here exercises GDM's session list, gnome-session's
-  `--session=lisa` lookup, or the `gnome-session@lisa.target` drop-in;
-  those files were written against the 50.3 source and the device's own
-  units (`gnome-session@%s.target` is the format string in
-  `gnome-session-init-worker`), but written is not run.
+  GDM greeter and got a desktop. `lisa-os` now builds this package into
+  the image (ADR-0039 step 4), so the *opportunity* exists where it did
+  not before — but until somebody logs in, "boots" means what
+  `smoke.sh` proves and no more. In particular nothing here exercises
+  GDM's session list, gnome-session's `--session=lisa` lookup, or the
+  `gnome-session@lisa.target` drop-in; those files were written against
+  the 50.3 source and the device's own units (`gnome-session@%s.target`
+  is the format string in `gnome-session-init-worker`), but written is
+  not run.
 - **The boot proof runs against a mock logind.** Session registration,
   seat handling and anything logind-shaped is therefore untested.
-- **`depends=(gnome-shell)` is transitional.** GNOME Shell ships D-Bus
-  *activatable* helpers (CalendarServer, Notifications, Screencast,
-  ScreenSaver, Extensions) whose `.service` files must sit in a
-  directory the session bus scans. A private prefix cannot claim that
-  namespace without file-conflicting with stock gnome-shell, and the
-  names those services are requested under are baked into the shell's
-  JavaScript — so renaming them is a source change, and step 2 has none.
-  While the pin is 50.3 the stock copies are the same code, so behaviour
-  is identical; the dependency makes that an enforced fact rather than a
-  hope. Step 3 resolves it.
+- **`depends=(gnome-shell)` is gone**, and so is the private prefix it
+  existed for. The activatable helpers' `.service` files are installed
+  by this package now, under the `org.gnome.Shell.*` names the shell's
+  own JavaScript asks for. No source change was needed for that — it
+  was always a packaging problem wearing a source-change costume.
+- **The stock `gnome.desktop` session entry still exists** in an image
+  that installs `gnome-session` (which stays — ADR-0048 keeps
+  gnome-session, mutter, GTK4 and the portals as foundation). Selecting
+  "GNOME" at the greeter runs `/usr/bin/gnome-shell`, which is this
+  package, so it is not a second desktop — it is this one under
+  GNOME's session name and without Lisa's session drop-in. GDM's
+  fallback session name is the hardcoded string `"gnome"`
+  (`gdm-session.c`, `get_fallback_session_name`), so making Lisa
+  Desktop the default is done per-user through AccountsService in
+  `lisa-os`, not here.
 - **x86_64 only.** ADR-0021's aarch64 lane is unbuilt here. The `arch=`
   line will be widened when there is a build behind it.
 - **Licence.** This package is GPL-3.0-or-later — GNOME Shell's licence,

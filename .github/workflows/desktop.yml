@@ -5,15 +5,18 @@
 # one compiles a desktop shell. Coupling them would make every change to
 # a shell surface wait for a GNOME Shell build.
 #
-# Three things are asserted, in order, and each is a real failure the
+# Five things are asserted, in order, and each is a real failure the
 # step before it cannot catch:
 #   1. it builds        — the pinned tarball, the patch series, meson
-#   2. it does not collide — guards inside the PKGBUILD, plus an
-#                            explicit check that pacman can install it
-#                            alongside stock gnome-shell
+#   2. it REPLACES gnome-shell — pacman removes the stock package, our
+#                         files take over its paths, and `pacman -Dk`
+#                         proves nothing that named gnome-shell as a
+#                         dependency was left unsatisfied by provides=
 #   3. it is stock      — every UI resource in the fork's libshell is
 #                         byte-for-byte the distribution's
-#   4. it boots         — the shell runs headless, owns org.gnome.Shell
+#   4. nothing went missing — every path stock gnome-shell owned is
+#                         still owned afterwards
+#   5. it boots         — the shell runs headless, owns org.gnome.Shell
 #                         and reports the pinned version
 #
 # (3) is the acceptance criterion of step 2 stated as a measurement
@@ -24,6 +27,16 @@
 # the incident where an extension silently did not load and the desktop
 # was stock GNOME with nobody noticing: "a desktop that fails by looking
 # like something else needs a test that looks".
+#
+# Since the fork installs at /usr, stock's libshell and file list must be
+# recorded BEFORE the package is installed — afterwards those paths are
+# ours, and comparing them would compare a file with itself. js-delta.py
+# now requires both arguments and refuses same-file input for exactly
+# that reason.
+#
+# `tags: ['v*']` alongside `paths:` is deliberate and correct: GitHub
+# does not evaluate path filters for pushes of tags, so a tag builds
+# unconditionally while a branch push still needs a desktop/ change.
 name: desktop
 on:
   push:
@@ -42,6 +55,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    # contents:write for the tag-triggered release step; the default
+    # token is read-only.
+    permissions:
+      contents: write
     container:
       image: archlinux:latest
     steps:
@@ -58,12 +75,29 @@ jobs:
             mutter pango polkit systemd-libs unzip upower webkitgtk-6.0 \
             asciidoc bash-completion evolution-data-server glib2-devel \
             gnome-keybindings gobject-introspection python-docutils sassc \
-            dbus python-gobject python-dbusmock
+            dbus python-gobject python-dbusmock pacman-contrib
           # makepkg refuses to run as root; the checkout is owned by the
           # runner uid, so hand the tree to a build user wholesale.
           useradd -m builder
 
       - uses: actions/checkout@v5
+
+      # Everything about the stock package, recorded while it still
+      # exists. Two later steps need this and neither can be taken
+      # afterwards: the byte-identical comparison needs stock's libshell,
+      # and the "nothing went missing" check needs its file list.
+      - name: Record what stock gnome-shell is, before replacing it
+        run: |
+          mkdir -p stock
+          pacman -Q gnome-shell | tee stock/version
+          pacman -Ql gnome-shell | awk '{print $2}' | LC_ALL=C sort > stock/files
+          cp /usr/lib/gnome-shell/libshell-18.so stock/libshell-18.so
+          wc -l stock/files
+          # Who names gnome-shell as a dependency. Printed, not asserted:
+          # the list is Arch's business and will change. What IS asserted
+          # is that none of them is left broken (`pacman -Dk`, below).
+          echo "-- reverse dependencies of gnome-shell:"
+          pactree -r gnome-shell
 
       - name: Build the package
         run: |
@@ -75,25 +109,82 @@ jobs:
           ls -l out/
           test -e out/lisa-desktop-shell-*.pkg.tar.zst
 
-      # The PKGBUILD's own guards already assert that nothing lands
-      # outside the private prefix. This asserts the consequence pacman
-      # cares about: the package installs on a system that already has
-      # stock gnome-shell, with no file conflicts and no --overwrite.
-      - name: It co-installs with stock gnome-shell
+      # The claim is no longer "co-installs". It is "replaces": pacman
+      # removes stock gnome-shell, this package takes over its files and
+      # answers to its name, and nothing that depended on it dangles.
+      - name: It replaces stock gnome-shell
         run: |
-          pacman -Q gnome-shell
           pacman -U --noconfirm out/lisa-desktop-shell-*.pkg.tar.zst
-          pacman -Q gnome-shell lisa-desktop-shell
-          test -x /usr/lib/lisa-desktop/bin/gnome-shell
+          # Stock is GONE. `pacman -Q <name>` matches package names only,
+          # never provides, so this cannot be satisfied by our own
+          # provides=(gnome-shell) and pass for the wrong reason.
+          if pacman -Q gnome-shell >/dev/null 2>&1; then
+            echo "FAIL: stock gnome-shell is still installed" >&2
+            exit 1
+          fi
+          pacman -Q lisa-desktop-shell
+          # ...but the NAME is satisfied. `pacman -T` is the deptest
+          # verb: it prints what is missing and exits non-zero if any
+          # target is unsatisfied, and it does resolve provides.
+          pacman -T 'gnome-shell'
+          echo "gnome-shell is satisfied by provides="
+          # The files are ours, at the paths the rest of the system reads.
+          pacman -Qo /usr/bin/gnome-shell
+          test -x /usr/bin/gnome-shell
           test -e /usr/share/wayland-sessions/lisa-desktop.desktop
           test -e /usr/lib/systemd/user/gnome-session@lisa.target.d/lisa-session.conf
+          test -e /usr/lib/systemd/user/lisa-desktop@.service
+          test -e /usr/share/gnome-session/sessions/lisa.session
+          # The five D-Bus-activatable helpers a private prefix could not
+          # host — the reason this package used to carry a transitional
+          # depends=(gnome-shell) to borrow stock's copies. They are ours
+          # now, under the org.gnome.Shell.* names the shell's JavaScript
+          # asks for, with nothing else claiming them.
+          for svc in org.gnome.Shell.Extensions org.gnome.Shell.Notifications \
+                     org.gnome.Shell.Screencast org.gnome.ScreenSaver \
+                     org.gnome.Shell.CalendarServer; do
+            pacman -Qo "/usr/share/dbus-1/services/$svc.service"
+          done
+          # The whole-system claim, and the one that turns "provides=
+          # should work" into "provides= does work": no unsatisfied
+          # dependency anywhere after the swap.
+          pacman -Dk
 
       # The whole of ADR-0038 step 2 in one assertion: the interface the
       # fork will draw is, resource for resource, the one Arch's
       # gnome-shell draws. When step 3 lands this step gets
       # --allow-delta and becomes the fork's change report.
+      #
+      # Stronger than it was: at the shared prefix there is no longer a
+      # prefix substitution applied to the fork's bytes before hashing,
+      # so nothing is excused.
       - name: Its interface is byte-identical to stock gnome-shell
-        run: python desktop/tools/js-delta.py
+        run: python desktop/tools/js-delta.py /usr/lib/gnome-shell/libshell-18.so stock/libshell-18.so
+
+      # Byte-identical says the JavaScript is the same. This says the
+      # PACKAGE is. Without it, a meson option that quietly stopped
+      # installing a gresource or a libexec helper would sail through —
+      # the shell would still boot, and something would be missing with
+      # nothing saying so.
+      #
+      # /usr/share/licenses (per-package by construction) and
+      # /usr/share/doc (-D gtk_doc=false, and the image NoExtracts it
+      # anyway) are the two named allowances. Everything else fails.
+      - name: Nothing stock gnome-shell shipped went missing
+        run: |
+          pacman -Ql lisa-desktop-shell | awk '{print $2}' | LC_ALL=C sort > ours.files
+          echo "-- paths this package adds that stock did not have:"
+          LC_ALL=C comm -13 stock/files ours.files
+          LC_ALL=C comm -23 stock/files ours.files \
+            | grep -v '^/usr/share/licenses/' \
+            | grep -v '^/usr/share/doc/' > missing.files || true
+          echo "-- paths stock had that this package does not:"
+          cat missing.files
+          if [ -s missing.files ]; then
+            echo "FAIL: replacing gnome-shell would drop the paths above" >&2
+            exit 1
+          fi
+          echo "OK: this package's payload covers stock gnome-shell's"
 
       # LISA_SMOKE_MOCK_LOGIND: a job container has no systemd-logind,
       # and the shell asks logind for the session while building its
@@ -113,3 +204,27 @@ jobs:
           name: lisa-desktop-shell
           path: out/*.pkg.tar.zst
           if-no-files-found: error
+
+      # On a tag the package becomes a release asset — the input
+      # lisa-packages' publish workflow pulls from to build [lisa]
+      # (ADR-0039), which is how the image gets it. package.yml attaches
+      # the two JavaScript packages to the SAME release and finishes in
+      # seconds while this job runs for most of an hour, so neither side
+      # may assume it is the one creating the release: view-or-create,
+      # then upload --clobber. Either order works, no asset is lost.
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pacman -S --noconfirm --needed github-cli
+          # --repo, so gh never consults git: this step runs as root in
+          # a tree chowned to the build user, and root's git refuses it
+          # for "dubious ownership".
+          gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 \
+            || gh release create "${GITHUB_REF_NAME}" \
+                 --repo "${GITHUB_REPOSITORY}" \
+                 --title "${GITHUB_REF_NAME}" \
+                 --notes "lisa-desktop packages for the [lisa] repo (built by CI from this tag)"
+          gh release upload "${GITHUB_REF_NAME}" out/*.pkg.tar.zst \
+            --repo "${GITHUB_REPOSITORY}" --clobber

@@ -49,14 +49,16 @@ and one takes minutes:
 
 - **The GNOME Shell fork exists and builds** (ADR-0038 step 2, `desktop/`):
   pinned at the 50.3 release tarball, verified against the sha256 GNOME
-  publishes, installed into a private prefix as a parallel session. Its
-  delta at this pin contains nothing of Lisa's — that is the milestone,
-  not a shortfall. CI builds it, co-installs it with stock gnome-shell,
-  and boots it headless.
-- **Nobody has logged into it.** The reference iMac runs an immutable
-  A/B image with no package manager, so proving a real GDM login needs
-  the package built into an image on the `lisa-os` side. "Boots" means
-  what `desktop/smoke.sh` proves and no more.
+  publishes, installed at `/usr` **in place of** `gnome-shell`
+  (`provides=`/`conflicts=`). Its delta at this pin contains nothing of
+  Lisa's — that is the milestone, not a shortfall. CI builds it, proves
+  the replacement leaves no unsatisfied dependency and drops no file
+  stock owned, proves its 197 UI resources are byte-identical to
+  Arch's, and boots it headless.
+- **Nobody has logged into it.** `lisa-os` now installs this package
+  into the image from the `[lisa]` index (ADR-0039 step 4) and makes it
+  the default session, so the opportunity exists — but until a person
+  logs in, "boots" means what `desktop/smoke.sh` proves and no more.
 - The extension-era code in `shell/` is untouched by the fork and still
   the thing an image ships. Per ADR-0039 nothing was deleted in the
   monorepo, and removal happens only once the packages this repo builds

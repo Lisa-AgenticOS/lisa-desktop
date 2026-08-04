@@ -2,10 +2,12 @@
 Name=Lisa Desktop
 Comment=This session logs you into Lisa Desktop
 Exec=/usr/bin/gnome-session --session=lisa
-# Points at the fork's own binary, not gnome-session's: if this package
-# is removed and the file somehow survives, GDM must stop offering the
-# session rather than offer one that cannot start.
-TryExec=/usr/lib/lisa-desktop/bin/gnome-shell
+# Points at the shell binary, not gnome-session's: if this package is
+# removed and the file somehow survives, GDM must stop offering the
+# session rather than offer one that cannot start. GDM honours TryExec
+# (gdm-session.c get_session_command_for_file) and drops the session
+# from both the greeter list and the fallback search when it fails.
+TryExec=/usr/bin/gnome-shell
 Type=Application
 # DesktopNames=GNOME is deliberate and is NOT a leftover.
 # XDG_CURRENT_DESKTOP is read by xdg-desktop-portal to pick a backend, by

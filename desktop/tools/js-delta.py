@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """What does Lisa Desktop actually change about the shell you see?
 
-    desktop/tools/js-delta.py [--allow-delta] [FORK_LIBSHELL] [STOCK_LIBSHELL]
+    desktop/tools/js-delta.py [--allow-delta] FORK_LIBSHELL STOCK_LIBSHELL
 
 GNOME Shell's entire user interface is JavaScript compiled into a
 GResource that is linked *into* libshell-<abi>.so and registered by a
@@ -21,14 +21,18 @@ lands in .rodata), so `gresource list` cannot read it. Loading the
 library and asking GLib what it registered is the only honest way to
 enumerate it -- and it reads the same bytes the shell will.
 
-The comparison is made modulo the install prefix. The fork is built
-into /usr/lib/lisa-desktop, and GNOME Shell compiles its own LOCALEDIR,
-LIBEXECDIR and PKGDATADIR into js/misc/config.js -- so that one file
-differs for a reason that is packaging, not divergence. Rather than
-excusing the file wholesale (which would hide a real change hidden
-inside it), the fork's bytes have the relocation undone before hashing:
-every occurrence of the private prefix becomes the stock one. Anything
-still different after that is the fork.
+The comparison used to be made "modulo the install prefix", because the
+fork was built into a private /usr/lib/lisa-desktop and GNOME Shell
+compiles its own LOCALEDIR, LIBEXECDIR and PKGDATADIR into
+js/misc/config.js. That allowance is GONE: Lisa Desktop replaces
+gnome-shell at /usr, so config.js holds the same strings stock's does
+and the comparison is a plain byte comparison with nothing excused.
+Removing the allowance made the assertion strictly stronger -- there is
+no longer any substitution that could mask a change.
+
+Both libraries must therefore be named explicitly: at the same prefix
+the fork and stock occupy the same path, so save the distribution's
+copy aside BEFORE installing this package (CI does exactly that).
 
 Exit status: 0 if identical, 1 if anything differs, 2 on a usage or
 environment error. --allow-delta prints the delta and exits 0, which is
@@ -37,19 +41,14 @@ what a fork that has a delta will want once it has one.
 
 import ctypes
 import hashlib
+import os
 import subprocess
 import sys
 
-DEFAULT_FORK = "/usr/lib/lisa-desktop/lib/gnome-shell/libshell-18.so"
-DEFAULT_STOCK = "/usr/lib/gnome-shell/libshell-18.so"
-# The private prefix, and what the same tree looks like at /usr. Undoing
-# this substitution turns 'built somewhere else' back into 'the same
-# bytes'; see the module docstring.
-RELOCATION = (b"/usr/lib/lisa-desktop/lib", b"/usr/lib"), \
-             (b"/usr/lib/lisa-desktop/share", b"/usr/share")
+USAGE = "usage: js-delta.py [--allow-delta] FORK_LIBSHELL STOCK_LIBSHELL"
 
 
-def manifest(sofile, unrelocate=False):
+def manifest(sofile):
     """sha256 of every GResource the given library registers."""
     import gi
 
@@ -72,9 +71,6 @@ def manifest(sofile, unrelocate=False):
                 walk(path + child)
             else:
                 data = Gio.resources_lookup_data(path + child, 0).get_data()
-                if unrelocate:
-                    for private, stock in RELOCATION:
-                        data = data.replace(private, stock)
                 digest = hashlib.sha256(data).hexdigest()
                 out.append((path + child, digest))
 
@@ -82,13 +78,11 @@ def manifest(sofile, unrelocate=False):
     return sorted(out)
 
 
-def manifest_of(sofile, unrelocate=False):
+def manifest_of(sofile):
     """One library per process: two libshells in one process would
     register the same resource paths twice and the comparison would be
     meaningless."""
     argv = [sys.executable, __file__, "--manifest", sofile]
-    if unrelocate:
-        argv.append("--unrelocate")
     proc = subprocess.run(argv, capture_output=True, text=True)
     if proc.returncode != 0:
         sys.stderr.write(proc.stderr)
@@ -102,7 +96,7 @@ def manifest_of(sofile, unrelocate=False):
 
 def main(argv):
     if argv[:1] == ["--manifest"]:
-        for path, digest in manifest(argv[1], unrelocate="--unrelocate" in argv):
+        for path, digest in manifest(argv[1]):
             print(f"{digest} {path}")
         return 0
 
@@ -110,14 +104,22 @@ def main(argv):
     if argv[:1] == ["--allow-delta"]:
         allow_delta, argv = True, argv[1:]
 
-    fork = argv[0] if len(argv) > 0 else DEFAULT_FORK
-    stock = argv[1] if len(argv) > 1 else DEFAULT_STOCK
+    # No defaults. At a shared prefix a default would silently compare
+    # the installed library against itself and report "identical" --
+    # a green result that inspected nothing, which is worse than no
+    # check at all.
+    if len(argv) != 2:
+        sys.stderr.write(USAGE + "\n")
+        return 2
+    fork, stock = argv
+    if os.path.realpath(fork) == os.path.realpath(stock):
+        sys.stderr.write("!! fork and stock are the same file; there is nothing to compare\n")
+        return 2
 
     print(f":: fork  {fork}")
     print(f":: stock {stock}")
-    print(":: comparing modulo the install prefix "
-          f"({RELOCATION[0][0].decode()} -> {RELOCATION[0][1].decode()})")
-    ours, theirs = manifest_of(fork, unrelocate=True), manifest_of(stock)
+    print(":: comparing byte-for-byte, no prefix allowance")
+    ours, theirs = manifest_of(fork), manifest_of(stock)
     print(f":: {len(ours)} resources in the fork, {len(theirs)} in stock")
 
     # Three questions kept separate, because they mean different things:
