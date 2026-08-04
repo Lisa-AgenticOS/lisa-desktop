@@ -40,7 +40,13 @@ echo ">> rebasing the Lisa Desktop series: $old_ver -> $new_ver"
 echo ">> scratch: $work"
 
 fetch() {  # fetch <version>; echoes the verified tarball path
-    local v=$1 major=${1%%.*} tar="$work/gnome-shell-$v.tar.xz"
+    # One assignment per line: `local` expands all of its arguments
+    # before assigning any of them, so `local v=$1 tar=".../$v.tar.xz"`
+    # reads $v while it is still unset — which under `set -u` is a
+    # crash, and without it would be a silent wrong filename.
+    local v=$1
+    local major=${1%%.*}
+    local tar="$work/gnome-shell-$v.tar.xz"
     local base="https://download.gnome.org/sources/gnome-shell/$major"
     curl -fsSL -o "$tar" "$base/gnome-shell-$v.tar.xz"
     # Upstream publishes the checksum next to the artefact. We verify
@@ -104,7 +110,15 @@ fi
 
 # 4. regenerate the series and re-pin
 rm -f "$patchdir"/*.patch
-git format-patch -o "$patchdir" --no-signature --zero-commit --no-numbered-files upstream-new..lisa >/dev/null
+# --full-index is not cosmetic: `git am --3way` finds the pre-image blob
+# by the hash on the patch's index line, and format-patch abbreviates it
+# by default. An abbreviated hash makes the next rebase fall back to
+# plain context matching, which is the failure mode this whole design
+# exists to avoid.
+# --zero-commit so a regenerated series that changed nothing is
+# byte-identical to the old one, instead of churning on every run.
+git format-patch -o "$patchdir" --no-signature --zero-commit --full-index \
+    upstream-new..lisa >/dev/null
 sed -i.bak "s/^pkgver=.*/pkgver=$new_ver/" "$pkgbuild"
 # Only the FIRST sha256sums entry is the upstream tarball; the second is
 # SKIP for our own git archive and must not be touched.

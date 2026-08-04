@@ -258,6 +258,16 @@ The rebase is a real three-way merge between two real trees, which is
 the second reason to prefer a series over anchors — there is no way to
 "rebase" a `sed` expression.
 
+This has been run, not just written: the series was rebased from 50.3
+onto the real 50.2 release in a throwaway copy of the repository. It
+fetched and verified 50.2 against GNOME's published checksum, carried
+the libical patch across with its authorship intact, rewrote the pin to
+50.2 and its hash, and regenerated the patch with the new tree's blob
+hashes. The copy was then discarded — the pin here is still 50.3.
+Rebasing *backwards* is not a use case, but the machinery is
+direction-agnostic and 50.2 was the only other real release to test
+against without inventing one.
+
 ## How to extend it
 
 Add to the fork by adding a patch, never by editing in place:
