@@ -11,6 +11,7 @@ own upstream, its own rebase cadence, and its own release channel.
 
 | Path | Surface |
 |---|---|
+| `desktop` | **The fork itself** — vendored GNOME Shell, the patch series, and the packaging that makes it a session (ADR-0038 step 2) |
 | `shell/desktop` | The Shell extension that makes GNOME look like Lisa (dock, panel, wordmark) — the code ADR-0038 step 3 absorbs into the fork |
 | `shell/overlay-extension` | The `dev.lisaos.Overlay1` backend + transient prompt overlay |
 | `shell/assistant` | Lisa Assistant — the persistent chat window |
@@ -29,22 +30,37 @@ place.
 
 ## How it works
 
-Everything here is GJS/JS/CSS plus one C++ fcitx5 addon; it talks to
-the OS only over D-Bus (`dev.lisaos.*` names) and the fcitx5 addon's
-HTTP client. There is no build step for the JS: on a Lisa OS device the
-files are copied into place by the `lisa` package. Component READMEs in
-each directory carry the smallest real usage example.
+`shell/` and `ime/` are GJS/JS/CSS plus one C++ fcitx5 addon; they talk
+to the OS only over D-Bus (`dev.lisaos.*` names) and the fcitx5 addon's
+HTTP client. There is no build step for that JS. `desktop/` is the
+opposite: a C and JavaScript codebase vendored from upstream, compiled,
+and packaged — see `desktop/README.md`, which is where the vendoring
+and rebase strategy is written down.
+
+Two package streams, deliberately separate, because one takes seconds
+and one takes minutes:
+
+| Build | Produces | Gate |
+|---|---|---|
+| `build-package.sh` | `lisa-desktop`, `lisa-desktop-ime` | `.github/workflows/package.yml` |
+| `desktop/build-package.sh` | `lisa-desktop-shell` | `.github/workflows/desktop.yml` |
 
 ## Status, honestly
 
-- The GNOME Shell vendor tree (ADR-0038 step 1) is **not here yet** —
-  this repo currently holds the extension-era code that the fork will
-  absorb. Vendoring at a pinned signed tag is the next step.
-- This repo does **not yet produce a package**. Until it does, the
-  `lisa-os` monorepo's copies of these directories remain the ones an
-  image ships; per ADR-0039, nothing was deleted there, and removal
-  happens only once the package this repo builds is what the image
-  installs.
+- **The GNOME Shell fork exists and builds** (ADR-0038 step 2, `desktop/`):
+  pinned at the 50.3 release tarball, verified against the sha256 GNOME
+  publishes, installed into a private prefix as a parallel session. Its
+  delta at this pin contains nothing of Lisa's — that is the milestone,
+  not a shortfall. CI builds it, co-installs it with stock gnome-shell,
+  and boots it headless.
+- **Nobody has logged into it.** The reference iMac runs an immutable
+  A/B image with no package manager, so proving a real GDM login needs
+  the package built into an image on the `lisa-os` side. "Boots" means
+  what `desktop/smoke.sh` proves and no more.
+- The extension-era code in `shell/` is untouched by the fork and still
+  the thing an image ships. Per ADR-0039 nothing was deleted in the
+  monorepo, and removal happens only once the packages this repo builds
+  are what the image installs.
 
 ## How to extend it
 
@@ -56,6 +72,10 @@ reverse-DNS names are `dev.lisaos.*`/`app.lisaos.*` (ADR-0016).
 ## Limits
 
 - Validated on one reference device (iMac18,2). No aarch64 machine has
-  rendered this desktop.
-- CI for this repo is not set up yet; the lint/test gates still run in
+  rendered this desktop, and `lisa-desktop-shell` is `arch=(x86_64)`
+  because that is the only architecture it has been built on.
+- CI here builds and boots the packages; the JS lint gate still runs in
   `lisa-os`.
+- `lisa-desktop-shell` is GPL-3.0-or-later, not this repo's
+  GPL-2.0-only: it is derived from GNOME Shell and a derived work cannot
+  be relicensed downwards. See `desktop/README.md`.
