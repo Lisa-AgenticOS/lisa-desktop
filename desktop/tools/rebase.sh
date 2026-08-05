@@ -119,11 +119,34 @@ rm -f "$patchdir"/*.patch
 # byte-identical to the old one, instead of churning on every run.
 git format-patch -o "$patchdir" --no-signature --zero-commit --full-index \
     upstream-new..lisa >/dev/null
-sed -i.bak "s/^pkgver=.*/pkgver=$new_ver/" "$pkgbuild"
+# Re-pinning is an assertion, not an edit.
+#
+# This was two `sed -i.bak` calls, and the second one was
+# `0,/^  '[0-9a-f]\{64\}'$/s//.../`. `0,/re/` is a GNU extension: BSD
+# sed accepts the script, exits 0, and changes nothing. The 50.3 -> 50.4
+# rebase was run on a macOS host and produced a PKGBUILD carrying the
+# NEW pkgver beside the OLD tarball hash — an incoherent pin, written
+# silently, by the tool whose own README is an argument against `sed`
+# that exits 0 having matched nothing (#5).
+#
+# So: awk with no GNU-only syntax, and a comparison that makes "matched
+# nothing" a hard failure. The guard now exists for the pin the way
+# `git am --3way` exists for the series.
+repin() {  # repin <awk-program> <value>
+    awk -v val="$2" -v q="'" "$1" "$pkgbuild" > "$pkgbuild.new"
+    if cmp -s "$pkgbuild" "$pkgbuild.new"; then
+        echo "!! re-pinning $pkgbuild matched nothing — the PKGBUILD's shape moved" >&2
+        rm -f "$pkgbuild.new"
+        exit 1
+    fi
+    mv "$pkgbuild.new" "$pkgbuild"
+}
+repin '/^pkgver=/ && !done { $0 = "pkgver=" val; done = 1 } { print }' "$new_ver"
 # Only the FIRST sha256sums entry is the upstream tarball; the second is
-# SKIP for our own git archive and must not be touched.
-sed -i.bak "0,/^  '[0-9a-f]\{64\}'\$/s//  '$new_sha'/" "$pkgbuild"
-rm -f "$pkgbuild.bak"
+# SKIP for our own git archive and must not be touched. Matching
+# [0-9a-f]+ rather than a {64} interval keeps this off BSD awk's
+# interval-expression support; 'SKIP' cannot match it either way.
+repin '!done && $0 ~ "^  " q "[0-9a-f]+" q "$" { $0 = "  " q val q; done = 1 } { print }' "$new_sha"
 
 cat <<EOF
 

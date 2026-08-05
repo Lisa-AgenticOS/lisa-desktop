@@ -48,7 +48,7 @@ and one takes minutes:
 ## Status, honestly
 
 - **The GNOME Shell fork exists and builds** (ADR-0038 step 2, `desktop/`):
-  pinned at the 50.3 release tarball, verified against the sha256 GNOME
+  pinned at the 50.4 release tarball, verified against the sha256 GNOME
   publishes, installed at `/usr` **in place of** `gnome-shell`
   (`provides=`/`conflicts=`). Its delta at this pin contains nothing of
   Lisa's — that is the milestone, not a shortfall. CI builds it, proves

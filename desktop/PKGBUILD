@@ -8,7 +8,7 @@
 # an upstream version; tools/rebase.sh reads and rewrites these two lines
 # and nothing else.
 #
-# Derived from Arch's gnome-shell PKGBUILD (1:50.3-1) — same dependency
+# Derived from Arch's gnome-shell PKGBUILD (1:50.4-1) — same dependency
 # set, same meson flags, same compiler flags, same install prefix — so
 # that what we build is the same code the reference device already runs.
 # One deliberate difference: the source is the release tarball verified
@@ -47,12 +47,12 @@
 #
 # At this pin the Lisa delta is EMPTY. patches/ holds exactly one patch
 # and it is not ours: Arch's one-line libical-4 build fix, without which
-# upstream 50.3 does not compile against the libical the device ships.
+# upstream 50.4 does not compile against the libical the device ships.
 # That is the acceptance criterion of step 2 — the fork is byte-identical
 # to stock because there is nothing in it that is not stock.
 
 pkgname=lisa-desktop-shell
-pkgver=50.3
+pkgver=50.4
 pkgrel=1
 pkgdesc="Lisa Desktop: the GNOME Shell fork, installed in place of gnome-shell"
 # x86_64 only, and only because that is the only architecture this has
@@ -66,7 +66,7 @@ url="https://github.com/Lisa-AgenticOS/lisa-desktop"
 # installed next to ours for the same reason.
 license=(GPL-3.0-or-later)
 depends=(
-  # Arch's gnome-shell 1:50.3-1 runtime dependency set, verbatim.
+  # Arch's gnome-shell 1:50.4-1 runtime dependency set, verbatim.
   accountsservice
   at-spi2-core
   bash
@@ -165,7 +165,7 @@ source=(
   "lisa-desktop-tree.tar.gz"
 )
 sha256sums=(
-  '450458c44a26d25a9b84288e12b9005d4c5c44648cfc6b790be19a05de7f1735'
+  'c531939539db316a41aef23670370abd1330d3254f84bcb0f9f4dae5d6e362cf'
   'SKIP'
 )
 
