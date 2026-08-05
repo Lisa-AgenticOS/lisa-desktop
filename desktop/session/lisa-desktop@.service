@@ -1,5 +1,5 @@
 # Lisa Desktop's shell unit. Structurally identical to gnome-shell's own
-# org.gnome.Shell@.service (50.3) — every [Unit] ordering and failure
+# org.gnome.Shell@.service (50.4) — every [Unit] ordering and failure
 # relationship is copied unchanged, because the session lifecycle is
 # behaviour and step 2 changes no behaviour. Exactly ONE line differs
 # from upstream's: the Description. The unit name is the second

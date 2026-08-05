@@ -39,10 +39,10 @@ Upstream is a **release tarball verified against the sha256 GNOME
 publishes beside it**, not a git tag:
 
 ```
-gnome-shell-50.3.tar.xz
-  sha256 450458c44a26d25a9b84288e12b9005d4c5c44648cfc6b790be19a05de7f1735
+gnome-shell-50.4.tar.xz
+  sha256 c531939539db316a41aef23670370abd1330d3254f84bcb0f9f4dae5d6e362cf
   from   https://download.gnome.org/sources/gnome-shell/50/
-  and    .../gnome-shell-50.3.sha256sum publishes that same hash
+  and    .../gnome-shell-50.4.sha256sum publishes that same hash
 ```
 
 Arch builds gnome-shell from a git tag instead, with a comment
@@ -104,10 +104,11 @@ fork.
 One patch, and it is worth being precise about it:
 
 `0001-Fix-build-with-libical-4.patch` — Antonio Rojas's one-line fix
-from Arch's own gnome-shell package. GNOME Shell 50.3 does not compile
+from Arch's own gnome-shell package. GNOME Shell 50.4 does not compile
 against libical 4 (Arch ships 4.0.4); the calendar server's function
-pointer type lost a `const`. Arch carries it, so the shell the reference
-device runs already contains it.
+pointer type lost a `const`. Arch still carries it at 1:50.4-1 — byte
+for byte the same patch — so the shell the reference device runs already
+contains it.
 
 This is the first thing step 2 found that the issue did not expect: the
 delta does not start empty in the sense of "no patches", it starts empty
@@ -250,7 +251,7 @@ interface files Lisa owns.
 
 ```
 # after installing the package
-desktop/smoke.sh 50.3
+desktop/smoke.sh 50.4
 ```
 
 Starts the shell as a headless display server on a private session bus
@@ -258,9 +259,9 @@ and asks it over D-Bus what it is:
 
 ```
 :: booting /usr/bin/gnome-shell (headless, private bus)
-ShellVersion=50.3
+ShellVersion=50.4
 Mode=user
-:: Lisa Desktop booted, owned org.gnome.Shell, and reported 50.3 in mode user
+:: Lisa Desktop booted, owned org.gnome.Shell, and reported 50.4 in mode user
 ```
 
 Owning `org.gnome.Shell` and answering a property read is not a liveness
@@ -305,15 +306,28 @@ The rebase is a real three-way merge between two real trees, which is
 the second reason to prefer a series over anchors — there is no way to
 "rebase" a `sed` expression.
 
-This has been run, not just written: the series was rebased from 50.3
-onto the real 50.2 release in a throwaway copy of the repository. It
-fetched and verified 50.2 against GNOME's published checksum, carried
-the libical patch across with its authorship intact, rewrote the pin to
-50.2 and its hash, and regenerated the patch with the new tree's blob
-hashes. The copy was then discarded — the pin here is still 50.3.
-Rebasing *backwards* is not a use case, but the machinery is
-direction-agnostic and 50.2 was the only other real release to test
-against without inventing one.
+This has now been run for real, on the release that prompted it: the
+pin above is the output of `rebase.sh 50.4`, run when Arch moved to
+gnome-shell 1:50.4-1 and mutter 50.4-1 on 2026-08-04 (#5). The series
+carried with no conflict — `src/calendar-server/gnome-shell-calendar-server.c`
+is byte-identical between the two releases, so the libical hunk's
+pre-image blob hash did not even change — and Antonio Rojas's authorship
+survived. 50.4 is a bugfix release: 35 files, none of them the systemd
+units or session files `session/` was written against.
+
+**The run also found a bug in this tool, which is the argument for
+running it.** Re-pinning the PKGBUILD used `sed -i "0,/re/s//.../"`.
+`0,/re/` is a GNU extension; BSD sed accepts it, exits 0, and changes
+nothing — so on a macOS host the rebase produced a PKGBUILD carrying the
+new `pkgver` beside the *old* tarball hash, silently. That is precisely
+the "`sed` that matches nothing exits 0" failure this whole directory is
+designed against, living inside the tool that argues against it. It is
+now `awk` with no GNU-only syntax, and a rewrite that matches nothing is
+a hard error rather than a no-op.
+
+An earlier dry run had rebased 50.3 *backwards* onto 50.2 in a throwaway
+copy, which exercised the merge but could not have exposed that bug: the
+pin it wrote was never used.
 
 ## How to extend it
 
@@ -321,13 +335,13 @@ Add to the fork by adding a patch, never by editing in place:
 
 ```
 # get a tree with the series already applied
-cd $(mktemp -d) && curl -O https://download.gnome.org/sources/gnome-shell/50/gnome-shell-50.3.tar.xz
-tar -xf gnome-shell-50.3.tar.xz
+cd $(mktemp -d) && curl -O https://download.gnome.org/sources/gnome-shell/50/gnome-shell-50.4.tar.xz
+tar -xf gnome-shell-50.4.tar.xz
 bash /path/to/lisa-desktop/desktop/tools/apply-series.sh \
-     gnome-shell-50.3 /path/to/lisa-desktop/desktop/patches \
-     "gnome-shell 50.3 (pristine upstream release tarball)"
+     gnome-shell-50.4 /path/to/lisa-desktop/desktop/patches \
+     "gnome-shell 50.4 (pristine upstream release tarball)"
 
-cd gnome-shell-50.3
+cd gnome-shell-50.4
 # ...edit, commit with a message that says why...
 git format-patch -o /path/to/lisa-desktop/desktop/patches --no-signature upstream..HEAD
 ```
@@ -356,12 +370,15 @@ Stated as of this pin, and only what has actually been run:
   been checked against three deliberate failures — wrong expected
   version, missing binary, a shell that cannot start — and reports each
   one correctly.
-- **Proven on the reference device, without installing anything:** all
-  134 shared libraries the fork links resolve on the iMac running Lisa
-  OS 20260804.76, and it binds the same `libmutter-18.so.0` as the
-  device's own gnome-shell. The package was unpacked read-only under
-  `/var/tmp/lisa-desktop-stage` for that check; nothing was installed
-  and nothing in `/usr` was touched.
+- **Proven on the reference device at the 50.3 pin, and not re-run
+  since:** all 134 shared libraries the fork linked resolved on the iMac
+  running Lisa OS 20260804.76, and it bound the same `libmutter-18.so.0`
+  as the device's own gnome-shell. The package was unpacked read-only
+  under `/var/tmp/lisa-desktop-stage` for that check; nothing was
+  installed and nothing in `/usr` was touched. **That measurement is
+  about the 50.3 package.** The 50.4 rebase has not been staged on the
+  device — and it is the more interesting run of the two, because the
+  device is what carried mutter 50.4 beside a 50.3 shell (#5).
 - **Not proven: a real login.** Nobody has selected "Lisa Desktop" at a
   GDM greeter and got a desktop. `lisa-os` now builds this package into
   the image (ADR-0039 step 4), so the *opportunity* exists where it did
@@ -369,7 +386,7 @@ Stated as of this pin, and only what has actually been run:
   `smoke.sh` proves and no more. In particular nothing here exercises
   GDM's session list, gnome-session's `--session=lisa` lookup, or the
   `gnome-session@lisa.target` drop-in; those files were written against
-  the 50.3 source and the device's own units (`gnome-session@%s.target`
+  the 50.4 source and the device's own units (`gnome-session@%s.target`
   is the format string in `gnome-session-init-worker`), but written is
   not run.
 - **The boot proof runs against a mock logind.** Session registration,

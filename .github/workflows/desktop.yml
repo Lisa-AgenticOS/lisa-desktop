@@ -94,14 +94,26 @@ jobs:
           # installed. It used to be read from the container, i.e. from
           # whatever Arch ships today: on 2026-08-04 Arch moved to
           # gnome-shell 50.4 and the unchanged fork went red against a
-          # baseline it never claimed. The claim under test is
-          # "byte-identical to GNOME Shell 50.3", so 50.3 is what it is
-          # measured against. Bump this URL together with the vendored
-          # tarball when the fork rebases.
+          # baseline it never claimed.
+          #
+          # The version is DERIVED from desktop/PKGBUILD, not written
+          # here. It used to be three hardcoded "1:50.3-1" literals, and
+          # the PKGBUILD's own header claims "no other file in this
+          # repository names an upstream version" — which was false, and
+          # the rebase to 50.4 (#5) is where a human would have had to
+          # remember all three. Now the pin has one home again.
+          pinned=$(sed -n 's/^pkgver=//p' desktop/PKGBUILD)
+          # Arch's epoch and pkgrel for that upstream release. Ours move
+          # independently of theirs, so these are not derived from the
+          # PKGBUILD's pkgrel — a rebuild on either side is a separate
+          # decision. Change these only if Arch re-releases the same
+          # upstream version.
+          baseline="1:${pinned}-1"
+          echo "-- baseline: gnome-shell ${baseline} (from desktop/PKGBUILD pkgver=${pinned})"
           curl -fsSL --retry 3 -o stock/baseline.pkg.tar.zst \
-            "https://archive.archlinux.org/packages/g/gnome-shell/gnome-shell-1%3A50.3-1-x86_64.pkg.tar.zst"
+            "https://archive.archlinux.org/packages/g/gnome-shell/gnome-shell-1%3A${pinned}-1-x86_64.pkg.tar.zst"
           bsdtar -xf stock/baseline.pkg.tar.zst -C stock/pkg
-          echo "gnome-shell 1:50.3-1 (pinned baseline, Arch archive)" | tee stock/version
+          echo "gnome-shell ${baseline} (pinned baseline, Arch archive)" | tee stock/version
           # The list must match `pacman -Ql` output exactly — the
           # went-missing check comms the two: directories carry a
           # trailing slash, and the archive metadata (.PKGINFO, .MTREE,
@@ -123,8 +135,8 @@ jobs:
           current=$(pacman -Q gnome-shell 2>/dev/null || echo "gnome-shell (not installed)")
           echo "-- Arch currently ships: $current"
           case "$current" in
-            *" 1:50.3-1") echo "-- pin matches Arch current" ;;
-            *) echo "::notice::Arch has moved past the fork's pin (now: $current). Rebase signal — see the repo README rebase flow." ;;
+            *" ${baseline}") echo "-- pin matches Arch current" ;;
+            *) echo "::notice::Arch has moved past the fork's pin (now: $current, pinned: ${baseline}). Rebase signal — see the repo README rebase flow." ;;
           esac
           # Who names gnome-shell as a dependency. Printed, not asserted:
           # the list is Arch's business and will change. What IS asserted

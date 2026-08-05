@@ -1,5 +1,5 @@
 # The OnFailure target of lisa-desktop@.service. Copied from
-# gnome-shell's org.gnome.Shell-disable-extensions.service (50.3) with
+# gnome-shell's org.gnome.Shell-disable-extensions.service (50.4) with
 # only the Description changed.
 #
 # ConditionPathExists is deliberately still the *gnome-shell* runtime
