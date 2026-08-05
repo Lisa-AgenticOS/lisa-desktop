@@ -88,11 +88,44 @@ jobs:
       # and the "nothing went missing" check needs its file list.
       - name: Record what stock gnome-shell is, before replacing it
         run: |
-          mkdir -p stock
-          pacman -Q gnome-shell | tee stock/version
-          pacman -Ql gnome-shell | awk '{print $2}' | LC_ALL=C sort > stock/files
-          cp /usr/lib/gnome-shell/libshell-18.so stock/libshell-18.so
+          mkdir -p stock stock/pkg
+          # The comparison BASELINE is the PINNED stock release the fork
+          # vendors — extracted from the permanent Arch archive, never
+          # installed. It used to be read from the container, i.e. from
+          # whatever Arch ships today: on 2026-08-04 Arch moved to
+          # gnome-shell 50.4 and the unchanged fork went red against a
+          # baseline it never claimed. The claim under test is
+          # "byte-identical to GNOME Shell 50.3", so 50.3 is what it is
+          # measured against. Bump this URL together with the vendored
+          # tarball when the fork rebases.
+          curl -fsSL --retry 3 -o stock/baseline.pkg.tar.zst \
+            "https://archive.archlinux.org/packages/g/gnome-shell/gnome-shell-1%3A50.3-1-x86_64.pkg.tar.zst"
+          bsdtar -xf stock/baseline.pkg.tar.zst -C stock/pkg
+          echo "gnome-shell 1:50.3-1 (pinned baseline, Arch archive)" | tee stock/version
+          # The list must match `pacman -Ql` output exactly — the
+          # went-missing check comms the two: directories carry a
+          # trailing slash, and the archive metadata (.PKGINFO, .MTREE,
+          # .BUILDINFO, .INSTALL) is not package content.
+          # (The grouping matters: without the outer \( \) around the
+          # print branches, find's operator precedence lets an excluded
+          # name fall through to the -o branch and print anyway —
+          # caught by testing the expression on real GNU find first.)
+          (cd stock/pkg && find . -mindepth 1 \
+              -not -name ".PKGINFO" -not -name ".MTREE" \
+              -not -name ".BUILDINFO" -not -name ".INSTALL" \
+              \( \( -type d -printf "/%P/\n" \) -o -printf "/%P\n" \)) \
+            | LC_ALL=C sort > stock/files
+          cp stock/pkg/usr/lib/gnome-shell/libshell-18.so stock/libshell-18.so
           wc -l stock/files
+          # Drift notice, printed and NEVER fatal: when Arch is past the
+          # pin, that is the rebase signal — deliberate work, not a red
+          # run on unchanged code.
+          current=$(pacman -Q gnome-shell 2>/dev/null || echo "gnome-shell (not installed)")
+          echo "-- Arch currently ships: $current"
+          case "$current" in
+            *" 1:50.3-1") echo "-- pin matches Arch current" ;;
+            *) echo "::notice::Arch has moved past the fork's pin (now: $current). Rebase signal — see the repo README rebase flow." ;;
+          esac
           # Who names gnome-shell as a dependency. Printed, not asserted:
           # the list is Arch's business and will change. What IS asserted
           # is that none of them is left broken (`pacman -Dk`, below).
