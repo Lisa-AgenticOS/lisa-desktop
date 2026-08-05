@@ -364,9 +364,9 @@ Stated as of this pin, and only what has actually been run:
   is satisfied by `provides=`, and `pacman -Dk` reports no unsatisfied
   dependency anywhere); no path stock owned went missing; the five
   `org.gnome.Shell.*` activatable services are ours; its 197 UI
-  resources are byte-identical to Arch's `gnome-shell` 1:50.3-1 with no
+  resources are byte-identical to Arch's `gnome-shell` 1:50.4-1 with no
   prefix allowance; and the shell boots headless, owns
-  `org.gnome.Shell` and reports 50.3 in mode `user`. `smoke.sh` has
+  `org.gnome.Shell` and reports 50.4 in mode `user`. `smoke.sh` has
   been checked against three deliberate failures — wrong expected
   version, missing binary, a shell that cannot start — and reports each
   one correctly.
