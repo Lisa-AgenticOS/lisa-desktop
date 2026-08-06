@@ -64,7 +64,20 @@
 
 pkgname=lisa-desktop-shell
 pkgver=50.4
-pkgrel=1
+# pkgrel, not pkgver: pkgver tracks the GNOME release the fork is
+# rebased onto, so a patch of OURS moves this instead. -1 is 50.4 with
+# an empty delta; -2 is 50.4 carrying patch 0002.
+#
+# It has to move, and the reason is not cosmetic. The version string is
+# the only handle two separate mechanisms have on "which shell is this":
+# `repo-add --new` keeps one entry per package and a rebuilt 50.4-1
+# would not outrank the published 50.4-1, so no device would ever be
+# offered the patch; and os/mkosi/desktop.lock is enforced by comparing
+# the pinned version against `pacman -Q` (lisa-os check-desktop.sh),
+# which cannot tell two different 50.4-1 packages apart. Shipping new
+# contents under an unchanged version does not merely fail to upgrade —
+# it makes the image's desktop pin state something untrue.
+pkgrel=2
 pkgdesc="Lisa Desktop: the GNOME Shell fork, installed in place of gnome-shell"
 # x86_64 only, and only because that is the only architecture this has
 # been built on. ADR-0021's aarch64 lane is unproven here; widen this

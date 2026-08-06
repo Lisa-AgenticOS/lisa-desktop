@@ -40,21 +40,36 @@ and rebase strategy is written down.
 Two package streams, deliberately separate, because one takes seconds
 and one takes minutes:
 
-| Build | Produces | Gate |
-|---|---|---|
-| `build-package.sh` | `lisa-desktop`, `lisa-desktop-ime` | `.github/workflows/package.yml` |
-| `desktop/build-package.sh` | `lisa-desktop-shell` | `.github/workflows/desktop.yml` |
+| Build | Produces | Gate | A tag publishes it? |
+|---|---|---|---|
+| `build-package.sh` | `lisa-desktop`, `lisa-desktop-ime` | `.github/workflows/package.yml` | **no** |
+| `desktop/build-package.sh` | `lisa-desktop-shell` | `.github/workflows/desktop.yml` | yes |
+
+Only the shell is attached to a release, and a release is the unit
+`lisa-packages` indexes, so only the shell reaches the signed `[lisa]`
+index. The two JavaScript packages were dropped from it on 2026-08-06:
+file for file they are a strict subset of the monorepo's `lisa-shell`,
+40 files behind it (`lisa-os` ADR-0057), and nothing installs them. They
+still build and are still tested on every push; the artifacts are on the
+workflow run. They become publishable again when ADR-0039 step 6 moves
+the source here and the gap closes.
 
 ## Status, honestly
 
 - **The GNOME Shell fork exists and builds** (ADR-0038 step 2, `desktop/`):
   pinned at the 50.4 release tarball, verified against the sha256 GNOME
   publishes, installed at `/usr` **in place of** `gnome-shell`
-  (`provides=`/`conflicts=`). Its delta at this pin contains nothing of
-  Lisa's — that is the milestone, not a shortfall. CI builds it, proves
-  the replacement leaves no unsatisfied dependency and drops no file
-  stock owned, proves its 197 UI resources are byte-identical to
-  Arch's, and boots it headless.
+  (`provides=`/`conflicts=`). CI builds it, proves the replacement
+  leaves no unsatisfied dependency and drops no file stock owned, and
+  boots it headless.
+- **The fork now diverges, by exactly two interface resources.** Step
+  2's milestone was an empty delta and it was met and recorded; at
+  50.4-2 the delta is `lisa-os#266` — Lisa Desktop grants
+  `org.gnome.Shell.Screenshot` to Lisa's own root-owned system binaries,
+  authorised by the caller's `/proc/<pid>/exe`. The byte-identical CI
+  step became the change report it always promised to become: it prints
+  the resources Lisa owns and fails if the list is anything other than
+  the two `desktop/patches/0002-*` touches.
 - **Nobody has logged into it.** `lisa-os` now installs this package
   into the image from the `[lisa]` index (ADR-0039 step 4) and makes it
   the default session, so the opportunity exists — but until a person
