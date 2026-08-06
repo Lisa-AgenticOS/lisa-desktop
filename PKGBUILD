@@ -12,6 +12,17 @@
 # from their own repo. The monorepo's lisa-shell package ships both
 # halves today; these packages exist so the image can stop needing it
 # (lisa-os#171 step 4).
+#
+# NOT YET, and #7 is how far off it is. Both packages here are built
+# and published into the signed [lisa] index; NEITHER is installed on
+# any device — /usr/lib/lisa/packages.manifest on the reference machine
+# lists lisa-shell, lisa-ime and lisa-desktop-shell. Compared file by
+# file against that index, lisa-desktop is a strict subset of
+# lisa-shell, and lisa-desktop + lisa-apps together are 40 files short
+# of it. Until ADR-0039 step 6 moves the SOURCE and that gap closes,
+# these are a second copy of a tree maintained elsewhere, and the
+# conflicts= lines below are what stop the two copies meeting on a
+# disk. See lisa-os ADR-0057.
 
 pkgbase=lisa-desktop
 pkgname=(lisa-desktop lisa-desktop-ime)
@@ -64,6 +75,21 @@ package_lisa-desktop() {
     # libqalculate ships qalc, the launcher's calculator lane (§5.7.2).
     depends=(gjs libadwaita lisa-cli libqalculate)
     optdepends=('gnome-shell: overlay + launcher + desktop Shell extensions (GNOME 46+)')
+    # This package and the monorepo's lisa-shell owned 51 of the same
+    # paths in the signed [lisa] index with nothing declared on either
+    # side (#7), so which surfaces a device ran was decided by install
+    # order. lisa-shell is the OWNER (lisa-os ADR-0057): it is what
+    # /usr/lib/lisa/packages.manifest shows installed, and the file lists
+    # say this package is a strict SUBSET of it — zero files here that
+    # lisa-shell does not also ship, and 40 of its files missing, among
+    # them the launcher's gschema (lisa-os#255) and the Assistant's D-Bus
+    # activation (lisa-os#210).
+    #
+    # So: conflicts, deliberately not replaces. `replaces` would swap
+    # lisa-shell out on the next -Syu and take those 40 files with it.
+    # This package becomes the owner when ADR-0039 step 6 moves the
+    # SOURCE and the gap is closed — not before, and not by a flag.
+    conflicts=(lisa-shell)
     cd "$pkgbase-$pkgver"
 
     # Same install location as the monorepo's lisa-shell package, so
@@ -128,6 +154,12 @@ package_lisa-desktop-ime() {
         'fcitx5-qt: Qt5/6 apps'
         'fcitx5-configtool: change the trigger key or turn the gesture off'
     )
+    # Same addon, same four paths, as the monorepo's lisa-ime:
+    # /usr/lib/fcitx5/lisa.so, /usr/share/fcitx5/addon/lisa.conf,
+    # /etc/profile.d/lisa-ime.sh, /etc/xdg/autostart/fcitx5-lisa.desktop.
+    # Nobody reported this pair — #7 named only the surfaces; it came out
+    # of enumerating the index. lisa-ime is what the image installs.
+    conflicts=(lisa-ime)
     cd "$pkgbase-$pkgver"
     DESTDIR="$pkgdir" cmake --install build-ime
 

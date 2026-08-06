@@ -38,6 +38,43 @@ jobs:
           ls -l out/
           test -e out/lisa-desktop-*-any.pkg.tar.zst
           test -e out/lisa-desktop-ime-*.pkg.tar.zst
+      # #7: these packages install the same paths as the monorepo's
+      # lisa-shell and lisa-ime — 51 and 4 of them, measured against the
+      # published index — so without a declared conflict pacman decides
+      # which surfaces a device runs by install order.
+      #
+      # Asserted on the ARTIFACT and not on the PKGBUILD, because the
+      # question is what pacman will be told. A `conflicts=` inside a
+      # package_*() function is one typo away from applying to the wrong
+      # split package, and nothing about the build would say so.
+      - name: Both packages declare their conflicts (#7)
+        run: |
+          fail=0
+          for pair in lisa-desktop:lisa-shell lisa-desktop-ime:lisa-ime; do
+            pkg=${pair%%:*}; want=${pair##*:}
+            # -[0-9] anchors the version, so lisa-desktop does not also
+            # match lisa-desktop-ime.
+            file=$(ls out/"$pkg"-[0-9]*.pkg.tar.zst 2>/dev/null | head -1)
+            if [ -z "$file" ]; then
+              echo "FAIL: no built package for $pkg — nothing to inspect."
+              fail=1; continue
+            fi
+            # Write to a file and read it back: a `| grep -q` here exits
+            # on the first match and SIGPIPEs tar, which under
+            # `set -o pipefail` fails the step AFTER the assertion passed.
+            tar -xOf "$file" .PKGINFO > /tmp/pkginfo.txt
+            if grep -q "^conflict = ${want}\$" /tmp/pkginfo.txt; then
+              echo "$pkg declares conflicts=($want): OK"
+            else
+              echo "FAIL: $pkg does not declare conflicts=($want)."
+              echo "      It shares installed paths with $want; without this,"
+              echo "      pacman resolves the overlap by install order."
+              echo "      --- conflict lines actually in .PKGINFO:"
+              grep '^conflict = ' /tmp/pkginfo.txt || echo "      (none)"
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ] || exit 1
       - uses: actions/upload-artifact@v4
         with:
           name: packages
