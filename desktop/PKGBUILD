@@ -45,11 +45,22 @@
 # (ADR-0001), and behind that the dd-able USB image — not a second
 # desktop on the same disk.
 #
-# At this pin the Lisa delta is EMPTY. patches/ holds exactly one patch
-# and it is not ours: Arch's one-line libical-4 build fix, without which
-# upstream 50.4 does not compile against the libical the device ships.
-# That is the acceptance criterion of step 2 — the fork is byte-identical
-# to stock because there is nothing in it that is not stock.
+# The Lisa delta is no longer empty, and it is worth being precise about
+# what ended that. patches/ holds two patches:
+#
+#   0001  NOT ours — Arch's one-line libical-4 build fix, without which
+#         upstream 50.4 does not compile against the libical the device
+#         ships. It should be dropped, not edited, when upstream fixes
+#         it.
+#   0002  the first deliberate divergence (lisa-os#266): Lisa Desktop
+#         grants org.gnome.Shell.Screenshot to Lisa's own root-owned
+#         system binaries, which stock GNOME 50 refuses to everything
+#         but the media-keys daemon and the portal. Two upstream files
+#         touched, one added.
+#
+# Step 2's acceptance criterion — byte-identical to stock — was met and
+# is recorded; CI's js-delta step now prints the delta and asserts it is
+# exactly those two interface resources and no others.
 
 pkgname=lisa-desktop-shell
 pkgver=50.4

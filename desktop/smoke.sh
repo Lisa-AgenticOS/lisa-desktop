@@ -27,6 +27,18 @@
 #                           real logind is the thing being exercised.
 #   LISA_SMOKE_ARGS         extra arguments for the shell
 #   LISA_SMOKE_TIMEOUT      seconds to wait for the bus name (default 60)
+#   LISA_SMOKE_GATE_PROBE   a gdbus-compatible binary installed at the
+#                           authorised path (a root-owned regular file
+#                           directly inside /usr/lib/lisa/bin). Set it
+#                           and the screenshot gate's POSITIVE control
+#                           runs; leave it unset and only the negative
+#                           control does. Nothing here can grant the
+#                           capability — the gate is compiled into the
+#                           shell and reads the caller's /proc entry —
+#                           this only tells the harness what to run.
+#   LISA_SMOKE_GATE_PROBE_UNOWNED
+#                           the same binary at the same directory but
+#                           NOT owned by root. Must be refused.
 set -euo pipefail
 
 bin=${LISA_DESKTOP_BIN:-/usr/bin/gnome-shell}
@@ -79,9 +91,78 @@ if [ "${1:-}" = "--inner" ]; then
     printf 'ShellVersion=%s\n' "$version"
     printf 'Mode=%s\n' "$(prop Mode || true)"
 
+    # --- The screenshot gate (lisa-os#266) -----------------------------
+    # Lisa Desktop grants org.gnome.Shell.Screenshot to its own
+    # root-owned system binaries and to nothing else. Both halves are
+    # asserted here, because a gate is only meaningful when the two
+    # controls use the SAME program at two different paths: the variable
+    # under test is then the authorisation, not the caller's behaviour.
+    gate=0
+    shoot() {  # shoot <binary> <output-png>
+        "$1" call --session \
+            --dest org.gnome.Shell.Screenshot \
+            --object-path /org/gnome/Shell/Screenshot \
+            --method org.gnome.Shell.Screenshot.Screenshot \
+            false false "$2" 2>&1
+    }
+
+    # Negative control. This harness's gdbus is not Lisa system tooling,
+    # so the capture must be refused and no file may appear. Free, safe
+    # on any machine, and it runs unconditionally: without it a green
+    # positive control would only prove that screenshots work.
+    deny_png=$XDG_RUNTIME_DIR/gate-denied.png
+    deny_out=$(shoot "$(command -v gdbus)" "$deny_png" || true)
+    printf 'GateDenied=%s\n' "$deny_out"
+    case "$deny_out" in
+        *AccessDenied*) ;;
+        *) echo "!! an unauthorised caller was NOT refused: $deny_out"; gate=1 ;;
+    esac
+    if [ -e "$deny_png" ]; then
+        echo "!! the refused call still produced $deny_png"; gate=1
+    fi
+
+    # Ownership control, when CI provides it: the authorised DIRECTORY
+    # with a binary root does not own. Refused, or the uid-0 check is
+    # decorative.
+    if [ -n "${LISA_SMOKE_GATE_PROBE_UNOWNED:-}" ]; then
+        unowned_png=$XDG_RUNTIME_DIR/gate-unowned.png
+        unowned_out=$(shoot "$LISA_SMOKE_GATE_PROBE_UNOWNED" "$unowned_png" || true)
+        printf 'GateUnowned=%s\n' "$unowned_out"
+        case "$unowned_out" in
+            *AccessDenied*) ;;
+            *) echo "!! a non-root-owned binary in the authorised directory was allowed"; gate=1 ;;
+        esac
+    fi
+
+    # Positive control. Without it the negative control above is
+    # satisfied by a gate that refuses everybody, which is what stock
+    # GNOME already does and is not the thing being added.
+    if [ -n "${LISA_SMOKE_GATE_PROBE:-}" ]; then
+        allow_png=$XDG_RUNTIME_DIR/gate-allowed.png
+        allow_out=$(shoot "$LISA_SMOKE_GATE_PROBE" "$allow_png" || true)
+        printf 'GateAllowed=%s\n' "$allow_out"
+        case "$allow_out" in
+            *"(true,"*) ;;
+            *) echo "!! the authorised caller was refused: $allow_out"; gate=1 ;;
+        esac
+        # A capture that returns success and writes nothing readable is
+        # the failure this whole issue is about, so check the pixels.
+        if [ ! -s "$allow_png" ]; then
+            echo "!! the authorised capture produced no file at $allow_png"; gate=1
+        else
+            printf 'GateAllowedBytes=%s\n' "$(wc -c <"$allow_png" | tr -d ' ')"
+            head -c 8 "$allow_png" | od -An -tx1 | tr -d ' \n' > "$XDG_RUNTIME_DIR/magic"
+            if [ "$(cat "$XDG_RUNTIME_DIR/magic")" != "89504e470d0a1a0a" ]; then
+                echo "!! the authorised capture is not a PNG"; gate=1
+            fi
+        fi
+    else
+        printf 'GateAllowed=%s\n' "skipped (LISA_SMOKE_GATE_PROBE unset)"
+    fi
+
     kill "$shell_pid" 2>/dev/null || true
     wait "$shell_pid" 2>/dev/null || true
-    exit 0
+    exit "$gate"
 fi
 
 [ -x "$bin" ] || { echo "!! no shell binary at $bin" >&2; exit 1; }
@@ -161,7 +242,10 @@ set -e
 # Never `grep -q` a pipe from the thing under test and then report the
 # grep's exit status: write what happened to a file and print the file.
 if [ $rc -ne 0 ]; then
-    echo "!! Lisa Desktop did not boot"
+    # Either the shell never answered, or it answered and a check below
+    # it failed. The harness output says which — it prints ShellVersion
+    # before it touches anything else.
+    echo "!! Lisa Desktop's boot check failed"
     echo "---- harness ----"; cat "$out"
     echo "---- shell log ----"; cat "$log" 2>/dev/null
     exit 1
@@ -187,3 +271,5 @@ if [ $fail -ne 0 ]; then
 fi
 
 echo ":: Lisa Desktop booted, owned org.gnome.Shell, and reported ${got_version:-<unread>} in mode $got_mode"
+echo ":: the screenshot gate refused an unauthorised caller$(
+    grep -q '^GateAllowedBytes=' "$out" && echo ' and served an authorised one' || true)"

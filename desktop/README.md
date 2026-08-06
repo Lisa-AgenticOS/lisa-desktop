@@ -15,11 +15,11 @@ Builds `lisa-desktop-shell`: GNOME Shell, pinned at a verified upstream
 release, built under Lisa's own name **in place of** the `gnome-shell`
 package, plus the five files that make it a selectable session.
 
-At this pin **the Lisa delta is empty**. That is the point of ADR-0038
-step 2, not a stage we have not reached yet: the milestone is "can we
-own this", and it is only answered honestly by a build with nothing of
-ours in it. `patches/` holds exactly one patch and it is Arch's, not
-ours — see below.
+The delta was empty through ADR-0038 step 2, which was the point: the
+milestone was "can we own this", and it is only answered honestly by a
+build with nothing of ours in it. That question is answered, and
+`patches/` now holds **one distro compat fix and one deliberate
+divergence** — screen capture (lisa-os#266), described below.
 
 | What | Where |
 |---|---|
@@ -101,7 +101,7 @@ fork.
 
 ### What is in `patches/` right now
 
-One patch, and it is worth being precise about it:
+Two patches, and it is worth being precise about both:
 
 `0001-Fix-build-with-libical-4.patch` — Antonio Rojas's one-line fix
 from Arch's own gnome-shell package. GNOME Shell 50.4 does not compile
@@ -117,10 +117,110 @@ is exactly the case the series format handles better than anchors — it
 has a real author, a real reason, and it should be dropped, not edited,
 when upstream fixes it.
 
+`0002-Lisa-Desktop-may-photograph-its-own-screen.patch` — ours, and the
+first thing in this directory that makes Lisa Desktop behave unlike
+GNOME Shell. See "Screen capture" below.
+
 The convention for the series: **compat and backport patches sort first,
 Lisa's own delta sorts after them.** `git format-patch` renumbers on
 every rebase, so the boundary is documented here and in each patch's
 own commit message rather than encoded in filenames.
+
+
+### Screen capture: who may photograph this screen
+
+`0002` is the fork's first deliberate divergence, and it exists because
+GNOME 50 refuses screen capture to the operating system that ships it.
+
+**What stock does.** `js/ui/screenshot.js` guards
+`org.gnome.Shell.Screenshot` with `DBusSenderChecker`, constructed with
+two well-known bus names:
+
+```js
+this._senderChecker = new DBusSenderChecker([
+    'org.gnome.SettingsDaemon.MediaKeys',
+    'org.freedesktop.impl.portal.desktop.gnome',
+]);
+```
+
+and `checkInvocation()` (`js/misc/util.js`) compares the invocation's
+sender against the *current owners* of those names:
+
+```js
+async _isSenderAllowed(sender) {
+    await this._initializedPromise;
+    return [...this._allowlistMap.values()].includes(sender);
+}
+```
+
+Anything else gets `GDBus.Error:org.freedesktop.DBus.Error.AccessDenied:
+Screenshot is not allowed`. Those two names are a person pressing Print,
+and the portal's interactive-consent dialog. There is no third door, and
+the reference device ships no `grim`, `gnome-screenshot`, `spectacle`,
+`scrot` or `wf-recorder` either, so the OS cannot see its own screen:
+not for the owner, not for CI on real hardware, not for a bug report.
+
+**Why not just add a Lisa bus name.** Because a well-known name is
+claimed first-come on a bus every process on the seat can reach. An
+allowlist entry for `dev.lisaos.Something` grants screen capture to
+whichever process asked the bus for that name first, which is
+authorisation obtainable by asking nicely (CLAUDE.md rule 6a). The same
+objection retires a command-line flag, a gsettings key and a config
+file: each of them is something a caller can arrange to be true.
+
+**What the patch does instead** — identity from the transport
+(ADR-0033). Only after upstream's check has already said no, the shell
+asks the bus daemon for the peer's credentials (`GetConnectionCredentials`,
+which the daemon derives from `SO_PEERCRED`, not from the message), reads
+`/proc/<pid>/exe`, and stats it. The caller is authorised only if:
+
+| | why |
+|---|---|
+| its uid is the uid this shell runs as | the session bus is per-user; the case where that is not true is the case that must not capture this screen |
+| `/proc/<pid>/exe` resolves to a direct child of `/usr/lib/lisa/bin` | that directory is installed by the OS image and is read-only to every non-root process |
+| that file is a regular file owned by uid 0, not group- or other-writable | otherwise somebody who is not root can replace what runs from there |
+| the directory itself is root-owned and not group/other-writable | otherwise somebody who is not root can add to it |
+| the exe link does not end in `" (deleted)"` | the binary was unlinked; whatever it was, it is not the file we stat |
+
+So after this patch the callers of `org.gnome.Shell.Screenshot` are:
+gnome-settings-daemon's media keys (unchanged), xdg-desktop-portal-gnome
+(unchanged), and processes running a root-owned binary out of
+`/usr/lib/lisa/bin`. **Not** `gdbus`, `gjs`, `python`, any GJS shell
+surface or Lisa app, any agent's shell tool, a copy of the CLI in
+`$HOME` — and **not the Lisa CLI's own runtime-channel copy** under
+`/var/lib/lisa-apps/payloads/runtime/current/bin/lisa`, which is
+`-rwxr-xr-x 1 lisa lisa` on the reference device. An unprivileged update
+channel does not get to hand this capability to arbitrary code, so a
+`lisa` verb that needs it must run the image-baked binary
+(`LISA_NO_CHANNEL=1`, or `/usr/lib/lisa/bin/lisa` directly).
+
+**A capture always flashes.** `flash` is an argument on the D-Bus
+method, so a caller can ask for silence; a Lisa-authorised caller does
+not get to. The shell forces the flashspot and the shutter sound
+whatever the argument said, and logs the calling binary and pid. A
+capture nobody can see is a camera with the light disabled, and the
+shell is the only participant a caller cannot rewrite.
+
+**What this is not.** It authorises a *binary*, not an intention.
+Anyone who can run `/usr/lib/lisa/bin/lisa` can reach what that binary
+exposes, and `LD_PRELOAD` into a non-setuid process is available to
+whoever owns it. That is deliberate: a guardrail sits between the model
+and the machine, never between a person and their own machine
+(ADR-0029, ADR-0030). The agent-facing decision — refusing an untrusted
+provenance chain, `screen.once`, the Ledger entry (PLAN §5.5,
+lisa-os#251, #252) — belongs to the CLI's guard, and lives in `lisa-os`,
+not here. What the shell buys is that the capture path is *one auditable
+binary* instead of every process on the bus, and that no capture is
+invisible.
+
+**Never allowlist an interpreter.** `/usr/bin/gjs` is root-owned and
+unwritable too, and allowlisting it would grant this to every script on
+the machine. The check is a directory of compiled Lisa binaries
+populated by the image, for exactly that reason.
+
+`InteractiveScreenshot`, `SelectArea` and `FlashArea` keep their own
+unmodified upstream checks; the patch touches only the three capture
+methods that go through `_createScreenshot`.
 
 ### Replacing gnome-shell: the stock prefix, and no source changes
 
@@ -243,9 +343,21 @@ The first red run is the tool's positive control: on 197 resources it
 found the one that differed under the old prefix, and it found it by
 three lines.
 
-When the delta stops being empty at step 3, this becomes the fork's
-change report — run it with `--allow-delta` and it prints exactly which
-interface files Lisa owns.
+The delta has stopped being empty, so this is now the fork's change
+report: CI runs it with `--allow-delta` and then asserts the printed
+list is exactly
+
+```
+-- added:
+   /org/gnome/shell/misc/lisaSystemCaller.js
+-- changed:
+   /org/gnome/shell/ui/screenshot.js
+```
+
+A resource appearing there that no patch in `patches/` explains is a
+finding, not a formality — that is the same "a desktop that fails by
+looking like something else needs a test that looks" argument ADR-0038
+makes, kept working after the thing it originally proved.
 
 ### Booting it
 
@@ -263,6 +375,19 @@ ShellVersion=50.4
 Mode=user
 :: Lisa Desktop booted, owned org.gnome.Shell, and reported 50.4 in mode user
 ```
+
+It then exercises the screenshot gate. The negative control always runs
+— the harness's own `gdbus` must be refused — because a gate that
+refuses everybody is what stock GNOME already does and would pass any
+test that only looked at the positive side. Set `LISA_SMOKE_GATE_PROBE`
+to a `gdbus`-compatible binary installed at the authorised path and the
+positive control runs too, asserting a real PNG comes back;
+`LISA_SMOKE_GATE_PROBE_UNOWNED` points at the same binary in the same
+directory but not owned by root, which must still be refused. CI sets
+both, using **one program at three locations**, so the variable under
+test is the authorisation rather than the caller's behaviour. Neither
+variable can grant anything: the gate is compiled into the shell and
+reads `/proc/<pid>/exe`.
 
 Owning `org.gnome.Shell` and answering a property read is not a liveness
 ping: it means the binary started, mutter brought up a compositor, and
@@ -379,6 +504,11 @@ Stated as of this pin, and only what has actually been run:
   about the 50.3 package.** The 50.4 rebase has not been staged on the
   device — and it is the more interesting run of the two, because the
   device is what carried mutter 50.4 beside a 50.3 shell (#5).
+- **The screenshot gate, proven by CI on every push:** an unauthorised
+  caller is refused with `AccessDenied` and leaves no file; a non-root
+  binary in the authorised directory is refused; a root-owned binary in
+  it captures a real PNG off the headless virtual monitor. Same program
+  in all three, different paths and owners.
 - **Not proven: a real login.** Nobody has selected "Lisa Desktop" at a
   GDM greeter and got a desktop. `lisa-os` now builds this package into
   the image (ADR-0039 step 4), so the *opportunity* exists where it did

@@ -1,0 +1,341 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lisa Desktop <lisa-desktop@lisaos.dev>
+Date: Thu, 6 Aug 2026 02:26:14 +0200
+Subject: [PATCH] Lisa Desktop may photograph its own screen (lisa-os#266)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+GNOME 50 gates org.gnome.Shell.Screenshot on DBusSenderChecker, which
+allows exactly two well-known bus names: org.gnome.SettingsDaemon.
+MediaKeys (a person pressing Print) and org.freedesktop.impl.portal.
+desktop.gnome (the interactive-consent path). Every other caller gets
+"Screenshot is not allowed". So on the reference device nothing the OS
+itself ships can capture the screen — not for the owner, not for CI on
+real hardware, not for a bug report — and several verification claims
+this week had to end with "appearance is unverified".
+
+Adding a Lisa bus name to that allowlist would not fix it: a well-known
+name is claimed first-come on a bus every process on the seat can reach,
+so it would grant screen capture to whoever asked for the name first.
+Authorisation obtainable by asking nicely is not authorisation.
+
+Identity comes from the transport instead (ADR-0033). The bus daemon
+reports the peer's pid and uid from SO_PEERCRED; /proc/<pid>/exe is the
+kernel's link to the inode that process runs; the inode's ownership says
+whether anyone but root could have put it there. A caller is authorised
+only if it runs a regular file directly inside /usr/lib/lisa/bin that is
+owned by uid 0 and not group- or other-writable, in a directory that is
+likewise root-owned and unwritable, under the uid the shell runs as.
+That directory is installed by the image and is read-only to every
+non-root process. The Lisa CLI's runtime-channel copy under
+/var/lib/lisa-apps is owned by the user, and is therefore refused: an
+unprivileged update channel does not get to hand this to arbitrary code.
+
+Upstream's checks are untouched — the Lisa path is only consulted after
+DBusSenderChecker has already said no, so everything GNOME refuses today
+it still refuses. Interactive screenshot, SelectArea and FlashArea keep
+their own unmodified checks; this covers only the three capture methods
+that go through _createScreenshot.
+
+A Lisa-authorised capture always flashes and plays the shutter sound,
+whatever the `flash` argument said, and logs the calling binary and pid.
+A capture nobody can see is a camera with the light disabled, and the
+shell is the only participant a caller cannot rewrite.
+
+This authorises a binary, not an intention: whoever can run
+/usr/lib/lisa/bin/lisa can reach what it exposes. That is deliberate —
+a guardrail sits between the model and the machine, never between a
+person and their own machine (ADR-0029, ADR-0030). Provenance,
+screen.once and the Ledger entry belong to the CLI's guard, which is
+why the capture path is narrowed to one auditable binary rather than
+left open to every process on the bus.
+---
+ js/js-resources.gresource.xml |   1 +
+ js/misc/lisaSystemCaller.js   | 178 ++++++++++++++++++++++++++++++++++
+ js/ui/screenshot.js           |  36 ++++++-
+ 3 files changed, 210 insertions(+), 5 deletions(-)
+ create mode 100644 js/misc/lisaSystemCaller.js
+
+diff --git a/js/js-resources.gresource.xml b/js/js-resources.gresource.xml
+index e5e6167..51c0fad 100644
+--- a/js/js-resources.gresource.xml
++++ b/js/js-resources.gresource.xml
+@@ -32,6 +32,7 @@
+     <file>misc/introspect.js</file>
+     <file>misc/jsParse.js</file>
+     <file>misc/keyboardManager.js</file>
++    <file>misc/lisaSystemCaller.js</file>
+     <file>misc/loginManager.js</file>
+     <file>misc/modemManager.js</file>
+     <file>misc/objectManager.js</file>
+diff --git a/js/misc/lisaSystemCaller.js b/js/misc/lisaSystemCaller.js
+new file mode 100644
+index 0000000..7ee3d5e
+--- /dev/null
++++ b/js/misc/lisaSystemCaller.js
+@@ -0,0 +1,178 @@
++// -*- mode: js; js-indent-level: 4; indent-tabs-mode: nil -*-
++//
++// Lisa Desktop — is the process on the other end of this D-Bus call one
++// of Lisa's own system binaries?  (lisa-os#266, ADR-0033, ADR-0048)
++//
++// This exists because GNOME's DBusSenderChecker answers a different
++// question: it asks whether the sender's unique name is the *current
++// owner of a well-known bus name*.  That is the right check for
++// gnome-settings-daemon and for xdg-desktop-portal-gnome, which are
++// started by the session and own their names for its lifetime.  It is
++// the wrong check for us, because a well-known name is claimed
++// first-come on a bus every process on the seat can reach: adding
++// "dev.lisaos.Something" to that allowlist would grant screen capture to
++// whoever asked the bus for the name first.  Authorisation that can be
++// obtained by asking nicely is not authorisation (CLAUDE.md rule 6a).
++//
++// So identity comes from the transport instead (ADR-0033).  Three facts,
++// none of them supplied by the caller:
++//
++//   1. the bus daemon reports the peer's pid and uid, taken from
++//      SO_PEERCRED on the peer's own socket.  Nothing in the message
++//      body is consulted, so there is nothing in it to forge.
++//   2. /proc/<pid>/exe is the kernel's link to the inode that process is
++//      executing.  A process cannot change it except by exec()ing
++//      something else, at which point it *is* something else.
++//   3. that inode's ownership and mode say whether anyone but root could
++//      have put the code there.
++//
++// What that adds up to, stated so nobody has to infer it:
++//
++//   * ALLOWED: a process running a regular file that lives directly in
++//     /usr/lib/lisa/bin, is owned by uid 0, is not writable by group or
++//     other, in a directory that is itself root-owned and not
++//     group/other-writable — and whose uid is the uid this shell runs
++//     as.  That directory is installed by the OS image and is read-only
++//     to every non-root process on the machine.
++//   * REFUSED: everything else on the bus.  Notably `gdbus`, `gjs`,
++//     `python`, any GJS shell surface or Lisa app, any agent's shell
++//     tool, a copy of the Lisa CLI in $HOME — and the Lisa CLI's own
++//     runtime-channel copy under /var/lib/lisa-apps, which is owned by
++//     the user and therefore replaceable by the user (measured on the
++//     reference device: -rwxr-xr-x 1 lisa lisa).  A capability that an
++//     unprivileged update channel can hand to arbitrary code is not one
++//     we are granting.
++//
++// Two limits, written down because a reader who discovers them later
++// would be right to distrust everything above:
++//
++//   * This authorises a BINARY, not an intention.  Anyone who can run
++//     /usr/lib/lisa/bin/lisa can reach whatever that binary exposes, and
++//     LD_PRELOAD into a non-setuid process is available to whoever owns
++//     it.  That is deliberate: a guardrail sits between the model and
++//     the machine, never between a person and their own machine
++//     (ADR-0029/0030).  The agent-facing decision — untrusted
++//     provenance, screen.once, the Ledger entry — belongs to the Lisa
++//     CLI's guard, which is exactly why the capture path is narrowed to
++//     one auditable binary instead of left open to every process on the
++//     bus.
++//   * Therefore never allowlist an interpreter.  /usr/bin/gjs is
++//     root-owned and unwritable too, and allowlisting it would grant
++//     this to every script on the system.  The directory checked here
++//     holds compiled Lisa binaries and is populated by the image.
++
++import Gio from 'gi://Gio';
++import GLib from 'gi://GLib';
++
++/**
++ * The one directory whose contents are Lisa's own system tooling. Not
++ * configurable, not overridable by an environment variable, not read
++ * from a file: a setting a caller can influence is a setting a caller
++ * can grant itself.
++ */
++const LISA_SYSTEM_BINDIR = '/usr/lib/lisa/bin';
++
++/**
++ * @param {string} path - the path to stat, without following symlinks
++ * @param {Gio.FileType} wantType - the file type it must have
++ * @returns {boolean} true if root owns it and no one else can write it
++ */
++function _rootOwnedAndUnwritable(path, wantType) {
++    let info;
++    try {
++        info = Gio.File.new_for_path(path).query_info(
++            'standard::type,unix::uid,unix::mode',
++            Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS, null);
++    } catch {
++        return false;
++    }
++
++    if (info.get_file_type() !== wantType)
++        return false;
++    if (info.get_attribute_uint32('unix::uid') !== 0)
++        return false;
++
++    // Group- or other-writable means someone who is not root can replace
++    // what runs from here. The answer to that is no, not "in practice
++    // nobody would": this fails closed on a machine whose permissions
++    // have been loosened, which is the machine that needs it to.
++    return (info.get_attribute_uint32('unix::mode') & 0o022) === 0;
++}
++
++/**
++ * Identify the caller of @invocation as one of Lisa's system binaries.
++ *
++ * @async
++ * @param {Gio.DBusMethodInvocation} invocation - the invocation to check
++ * @returns {Promise<?{pid: number, exe: string}>} the caller, or null if
++ *   it is not Lisa system tooling. Every failure path returns null:
++ *   there is no error to report that would not also be a way to learn
++ *   whether a given pid exists.
++ */
++export async function lisaSystemCaller(invocation) {
++    let credentials;
++    try {
++        const reply = await invocation.get_connection().call(
++            'org.freedesktop.DBus',
++            '/org/freedesktop/DBus',
++            'org.freedesktop.DBus',
++            'GetConnectionCredentials',
++            new GLib.Variant('(s)', [invocation.get_sender()]),
++            new GLib.VariantType('(a{sv})'),
++            Gio.DBusCallFlags.NONE,
++            -1,
++            null);
++        [credentials] = reply.recursiveUnpack();
++    } catch {
++        return null;
++    }
++
++    const pid = credentials['ProcessID'];
++    const uid = credentials['UnixUserID'];
++    if (!Number.isInteger(pid) || !Number.isInteger(uid))
++        return null;
++
++    // The session bus is per-user, so this is normally true by
++    // construction — but "normally true" is not a check, and the case
++    // where it is false (somebody else was let onto this bus) is exactly
++    // the case that must not capture this screen.
++    let ownUid;
++    try {
++        ownUid = Gio.Credentials.new().get_unix_user();
++    } catch {
++        return null;
++    }
++    if (uid !== ownUid)
++        return null;
++
++    // The pid cannot be stale here: it belongs to a connection the bus
++    // daemon still holds open, and the kernel does not reuse the pid of
++    // a live process. A caller that exec()s between the credential read
++    // and this readlink only changes which binary we see — and if that
++    // binary is not ours, the answer is no.
++    let exe;
++    try {
++        exe = GLib.file_read_link(`/proc/${pid}/exe`);
++    } catch {
++        return null;
++    }
++
++    // readlink() on a process whose binary has been unlinked yields
++    // "<path> (deleted)". Whatever that was, it is not the file the
++    // stat below would inspect.
++    if (exe.endsWith(' (deleted)'))
++        return null;
++
++    // A direct child of the directory, compared against the kernel's own
++    // canonical path — so there is no "..", no symlink, and no second
++    // path to the same place to be clever with.
++    if (GLib.path_get_dirname(exe) !== LISA_SYSTEM_BINDIR)
++        return null;
++
++    if (!_rootOwnedAndUnwritable(LISA_SYSTEM_BINDIR, Gio.FileType.DIRECTORY))
++        return null;
++    if (!_rootOwnedAndUnwritable(exe, Gio.FileType.REGULAR))
++        return null;
++
++    return {pid, exe};
++}
+diff --git a/js/ui/screenshot.js b/js/ui/screenshot.js
+index 499baa8..13a55fe 100644
+--- a/js/ui/screenshot.js
++++ b/js/ui/screenshot.js
+@@ -25,6 +25,7 @@ Gio._promisify(Shell.Screenshot, 'composite_to_stream');
+ 
+ import {ScreencastErrors, ScreencastError} from '../misc/dbusErrors.js';
+ import {loadInterfaceXML} from '../misc/fileUtils.js';
++import {lisaSystemCaller} from '../misc/lisaSystemCaller.js';
+ import {DBusSenderChecker} from '../misc/util.js';
+ 
+ const ScreenshotIface = loadInterfaceXML('org.gnome.Shell.Screenshot');
+@@ -2502,6 +2503,7 @@ export class ScreenshotService {
+             lockedDown = this._lockdownSettings.get_boolean('disable-save-to-disk');
+ 
+         const sender = invocation.get_sender();
++        let lisaCaller = null;
+         if (this._screenShooter.has(sender)) {
+             invocation.return_error_literal(
+                 Gio.IOErrorEnum, Gio.IOErrorEnum.BUSY,
+@@ -2516,12 +2518,36 @@ export class ScreenshotService {
+             try {
+                 await this._senderChecker.checkInvocation(invocation);
+             } catch (e) {
+-                invocation.return_gerror(e);
+-                return null;
++                // Lisa Desktop (lisa-os#266): upstream's allowlist is two
++                // well-known bus names — the media-keys daemon, i.e. the
++                // human pressing Print, and the portal, i.e. the
++                // interactive-consent path. Neither is reachable by the
++                // OS's own tooling, so on stock GNOME 50 Lisa cannot
++                // photograph its own screen: not for the owner, not for
++                // CI on real hardware, not for a bug report.
++                //
++                // A bus name would be the wrong way to fix that — see
++                // misc/lisaSystemCaller.js. This asks the transport who
++                // the caller is instead, and grants the capability to
++                // Lisa's own root-owned system binaries and to nothing
++                // else. Everything upstream refuses, it still refuses.
++                lisaCaller = await lisaSystemCaller(invocation);
++                if (!lisaCaller) {
++                    invocation.return_gerror(e);
++                    return null;
++                }
++                console.log('Lisa Desktop: screen capture by ' +
++                    `${lisaCaller.exe} (pid ${lisaCaller.pid})`);
+             }
+         }
+ 
+         const shooter = new Shell.Screenshot();
++        // A capture nobody can see is a camera with the light disabled.
++        // The flash is an argument on the D-Bus method, so a caller can
++        // ask for silence; a Lisa-authorised caller does not get to. The
++        // shell is the only place this can be enforced, because it is
++        // the only participant the caller cannot rewrite.
++        shooter._lisaForceFlash = lisaCaller !== null;
+         shooter._watchNameId = Gio.bus_watch_name(Gio.BusType.SESSION,
+             sender, 0, null, this._onNameVanished.bind(this));
+ 
+@@ -2669,7 +2695,7 @@ export class ScreenshotService {
+ 
+         try {
+             await Promise.all([
+-                flash ? this._flashAsync(screenshot) : null,
++                flash || screenshot._lisaForceFlash ? this._flashAsync(screenshot) : null,
+                 screenshot.screenshot_area(x, y, width, height, stream),
+             ]);
+             this._onScreenshotComplete(stream, file, invocation);
+@@ -2692,7 +2718,7 @@ export class ScreenshotService {
+ 
+         try {
+             await Promise.all([
+-                flash ? this._flashAsync(screenshot) : null,
++                flash || screenshot._lisaForceFlash ? this._flashAsync(screenshot) : null,
+                 screenshot.screenshot_window(includeFrame, includeCursor, stream),
+             ]);
+             this._onScreenshotComplete(stream, file, invocation);
+@@ -2715,7 +2741,7 @@ export class ScreenshotService {
+ 
+         try {
+             await Promise.all([
+-                flash ? this._flashAsync(screenshot) : null,
++                flash || screenshot._lisaForceFlash ? this._flashAsync(screenshot) : null,
+                 screenshot.screenshot(includeCursor, stream),
+             ]);
+             this._onScreenshotComplete(stream, file, invocation);
