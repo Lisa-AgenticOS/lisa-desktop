@@ -504,6 +504,27 @@ Stated as of this pin, and only what has actually been run:
   about the 50.3 package.** The 50.4 rebase has not been staged on the
   device — and it is the more interesting run of the two, because the
   device is what carried mutter 50.4 beside a 50.3 shell (#5).
+- **Proven on the reference device at this pin (2026-08-06), and the
+  first time a Lisa Desktop build has drawn a frame anyone has seen.**
+  The CI-built package was staged under `/var/tmp/lisa-desktop-266` and
+  run inside a private mount namespace (`unshare -m`, the stage
+  bind-mounted over `/usr/bin/gnome-shell`, `/usr/lib/gnome-shell` and
+  `/usr/share/gnome-shell`), so nothing was installed, nothing in `/usr`
+  changed, and the session the owner was logged into never saw it. The
+  shell came up on the iMac's real GPU (amdgpu, gbm renderer) against
+  the device's own mutter 50.4, and an authorised caller captured a
+  **3840x2160 PNG of Lisa Desktop** — wallpaper, panel, dock, a Files
+  window — while `/usr/bin/gdbus`, the same program at another path, was
+  refused in the same run and left no file. The shell logged
+  `Lisa Desktop: screen capture by /usr/lib/lisa/bin/probe (pid 35884)`.
+  The **unpatched** 50.4 package, staged the same way, refuses the
+  authorised caller too — which is what makes the positive control a
+  control rather than a formality.
+- **Not proven: the live session.** The desktop the owner is logged into
+  runs the 50.3 package and is unpatched. Replacing the shell under a
+  running Wayland session means ending that session, which is not a
+  thing to do remotely to somebody's only machine; it reaches the device
+  the ordinary way, through an image release.
 - **The screenshot gate, proven by CI on every push:** an unauthorised
   caller is refused with `AccessDenied` and leaves no file; a non-root
   binary in the authorised directory is refused; a root-owned binary in
