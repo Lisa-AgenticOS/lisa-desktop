@@ -331,11 +331,19 @@ jobs:
 
       # On a tag the package becomes a release asset — the input
       # lisa-packages' publish workflow pulls from to build [lisa]
-      # (ADR-0039), which is how the image gets it. package.yml attaches
-      # the two JavaScript packages to the SAME release and finishes in
-      # seconds while this job runs for most of an hour, so neither side
-      # may assume it is the one creating the release: view-or-create,
-      # then upload --clobber. Either order works, no asset is lost.
+      # (ADR-0039), which is how the image gets it.
+      #
+      # Since 2026-08-06 this is the ONLY thing a tag here publishes:
+      # package.yml builds and tests lisa-desktop and lisa-desktop-ime
+      # but no longer attaches them, because the index is assembled from
+      # whole releases and those two are a stale subset of the
+      # monorepo's lisa-shell (lisa-os ADR-0057). A release from this
+      # repo is therefore exactly one file, and lisa-packages' `sources`
+      # box needs no per-package knowledge to keep it that way.
+      #
+      # view-or-create then upload --clobber is kept anyway: it costs
+      # nothing, and the day something else attaches to the same tag
+      # again, the ordering problem it solves comes straight back.
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v')
         env:

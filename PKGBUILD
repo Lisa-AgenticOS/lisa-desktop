@@ -14,15 +14,21 @@
 # (lisa-os#171 step 4).
 #
 # NOT YET, and #7 is how far off it is. Both packages here are built
-# and published into the signed [lisa] index; NEITHER is installed on
-# any device — /usr/lib/lisa/packages.manifest on the reference machine
+# and tested on every push, and NEITHER is published or installed
+# anywhere — /usr/lib/lisa/packages.manifest on the reference machine
 # lists lisa-shell, lisa-ime and lisa-desktop-shell. Compared file by
-# file against that index, lisa-desktop is a strict subset of
+# file against the [lisa] index, lisa-desktop is a strict subset of
 # lisa-shell, and lisa-desktop + lisa-apps together are 40 files short
 # of it. Until ADR-0039 step 6 moves the SOURCE and that gap closes,
-# these are a second copy of a tree maintained elsewhere, and the
-# conflicts= lines below are what stop the two copies meeting on a
-# disk. See lisa-os ADR-0057.
+# these are a second copy of a tree maintained elsewhere.
+#
+# They WERE in the index, at 0.1.0-1, and were dropped from it on
+# 2026-08-06: .github/workflows/package.yml no longer attaches them to
+# a release, which is what the index is built from. The conflicts=
+# lines below are what stops the two copies meeting on a disk if one is
+# ever installed by hand from a workflow artifact — they decide who
+# wins a collision, never whether the loser should exist. See lisa-os
+# ADR-0057.
 
 pkgbase=lisa-desktop
 pkgname=(lisa-desktop lisa-desktop-ime)

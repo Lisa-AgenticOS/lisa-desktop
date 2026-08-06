@@ -1,7 +1,9 @@
 # The one gate this repo has: the packages build, their tests pass
 # inside makepkg's check(), and the artifacts exist (lisa-os#171 step 1).
-# On a tag, the packages are attached to a GitHub release — the input
-# lisa-packages indexes into [lisa].
+# A tag does NOT publish them — see the note above the last step: they
+# are a strict subset of the monorepo's lisa-shell (lisa-os ADR-0057),
+# so they stay out of the signed [lisa] index. The shell is the only
+# thing this repo publishes, and desktop.yml attaches that.
 name: package
 on:
   push:
@@ -80,27 +82,52 @@ jobs:
           name: packages
           path: out/*.pkg.tar.zst
           if-no-files-found: error
-      - name: Attach to release
+      # NOT ATTACHED TO THE RELEASE, and this is the deliberate part.
+      #
+      # These two packages used to be uploaded here on every v* tag, and
+      # lisa-packages' publish workflow indexes a whole release ("gh
+      # release download --pattern '*.pkg.tar.zst'"), so being a release
+      # asset was the same thing as being in the signed [lisa] index
+      # every device trusts.
+      #
+      # They should not be in it. Measured file by file against that
+      # index (lisa-os ADR-0057): lisa-desktop is a strict SUBSET of the
+      # monorepo's lisa-shell — zero files of its own — and lisa-desktop
+      # plus lisa-apps together are 40 files short of it, missing the
+      # launcher's gschema (lisa-os#255), the Assistant's D-Bus
+      # activation (lisa-os#210) and Preview's manifest at the path
+      # agentd actually reads (lisa-os#241). Nothing installs them:
+      # /usr/lib/lisa/packages.manifest on the reference device lists
+      # lisa-shell, lisa-ime and lisa-desktop-shell. A signed, installable
+      # copy of a tree maintained elsewhere, 40 files behind it, is worse
+      # than no package — it is a working `pacman -S` away from a broken
+      # desktop, and the conflicts= lines added in #7 only decide who
+      # wins a collision, not whether the loser should have existed.
+      #
+      # This is enforced HERE rather than by omitting the source at
+      # dispatch time because the index is rebuilt from whole releases:
+      # the operator's only lever is repo=tag, and the shell ships from
+      # this same tag. Leaving it to whoever fills in the `sources` box
+      # is the "guarded by operator memory alone" shape that
+      # lisa-packages' own allow_partial guard was written to end.
+      #
+      # They still build, still run their check(), and still have the
+      # conflicts assertion above run against the artifact on every push
+      # and PR; the artifacts are attached to the workflow run. What
+      # changed is only that a tag no longer publishes them.
+      #
+      # To start publishing them again — after ADR-0039 step 6 moves the
+      # SOURCE here and the 40-file gap closes — restore an upload step
+      # that does view-or-create then `gh release upload --clobber`, with
+      # `--repo` so gh never consults git (this job runs as root in a
+      # tree chowned to the build user, and root's git refuses it for
+      # "dubious ownership"). desktop.yml attaches the shell to the same
+      # release and takes most of an hour to this job's seconds, so
+      # neither side may assume it is the one creating the release.
+      - name: Say what a tag does and does not publish
         if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          pacman -S --noconfirm --needed github-cli
-          # --repo, so gh never consults git: this step runs as root in
-          # a tree chowned to the build user, and root's git refuses
-          # "dubious ownership" — which failed the first v0.1.0 tag run
-          # AFTER the packages had built.
-          #
-          # View-or-create, then upload: desktop.yml attaches the shell
-          # package to this same release. `gh release create` on a tag
-          # that already has a release fails, and whichever job got there
-          # second would lose its asset — this job takes seconds and that
-          # one takes most of an hour, so the order is not ours to
-          # choose. Neither side assumes it is the creator.
-          gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 \
-            || gh release create "${GITHUB_REF_NAME}" \
-                 --repo "${GITHUB_REPOSITORY}" \
-                 --title "${GITHUB_REF_NAME}" \
-                 --notes "lisa-desktop packages for the [lisa] repo (built by CI from this tag)"
-          gh release upload "${GITHUB_REF_NAME}" out/*.pkg.tar.zst \
-            --repo "${GITHUB_REPOSITORY}" --clobber
+          echo "Tag ${GITHUB_REF_NAME}: these packages are BUILT and TESTED but"
+          echo "not attached to the release, so they stay out of the [lisa]"
+          echo "index (lisa-os ADR-0057). desktop.yml attaches the shell."
+          ls -l out/
