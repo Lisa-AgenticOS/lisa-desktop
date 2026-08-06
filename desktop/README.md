@@ -201,6 +201,24 @@ whatever the argument said, and logs the calling binary and pid. A
 capture nobody can see is a camera with the light disabled, and the
 shell is the only participant a caller cannot rewrite.
 
+Measured on the device rather than asserted from the source. One
+authorised process captures with `flash=false`; a second authorised
+process photographs the screen 120 ms later; a third capture with
+nothing happening is the control:
+
+```
+c-control                mean=0.628224  bytes=70254
+a-asked-for-no-flash     mean=0.628224  bytes=70254
+b-during                 mean=0.865699  bytes=41826
+authorised captures logged: 3
+```
+
+`a` matches the control because a capture's own frame is taken before
+its flash fires. `b` — the frame taken *during* the capture that asked
+for no flash — is 38% brighter and compresses to 60% of the size,
+because the flashspot is on the screen. The argument was ignored, which
+is the point.
+
 **What this is not.** It authorises a *binary*, not an intention.
 Anyone who can run `/usr/lib/lisa/bin/lisa` can reach what that binary
 exposes, and `LD_PRELOAD` into a non-setuid process is available to
