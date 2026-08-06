@@ -235,16 +235,33 @@ jobs:
           # dependency anywhere after the swap.
           pacman -Dk
 
-      # The whole of ADR-0038 step 2 in one assertion: the interface the
-      # fork will draw is, resource for resource, the one Arch's
-      # gnome-shell draws. When step 3 lands this step gets
-      # --allow-delta and becomes the fork's change report.
+      # This was ADR-0038 step 2's whole acceptance criterion — "the
+      # interface the fork draws is, resource for resource, the one
+      # Arch's gnome-shell draws" — and step 2 passed it. The delta is
+      # no longer empty (lisa-os#266), so as the tool's own docstring
+      # promised, it becomes the fork's CHANGE REPORT: --allow-delta
+      # prints exactly which interface resources Lisa owns and exits 0.
       #
-      # Stronger than it was: at the shared prefix there is no longer a
-      # prefix substitution applied to the fork's bytes before hashing,
-      # so nothing is excused.
-      - name: Its interface is byte-identical to stock gnome-shell
-        run: python desktop/tools/js-delta.py /usr/lib/gnome-shell/libshell-18.so stock/libshell-18.so
+      # It has not become weaker. It still compares byte-for-byte at the
+      # shared prefix with nothing excused, and the printed list is the
+      # only place a reviewer can see the fork's runtime divergence
+      # without taking a PKGBUILD's word for it. A resource appearing
+      # here that no patch in desktop/patches/ explains is a finding.
+      - name: What the fork changes about the interface
+        run: |
+          python desktop/tools/js-delta.py --allow-delta \
+            /usr/lib/gnome-shell/libshell-18.so stock/libshell-18.so | tee delta.txt
+          # The delta must be the one the series claims. Anything else
+          # in libshell's resources is divergence nobody reviewed.
+          printf '%s\n' \
+            /org/gnome/shell/misc/lisaSystemCaller.js \
+            /org/gnome/shell/ui/screenshot.js | LC_ALL=C sort > expected.files
+          sed -n 's/^   //p' delta.txt | LC_ALL=C sort > got.files
+          if ! diff expected.files got.files; then
+            echo "FAIL: the fork's interface delta is not what desktop/patches/ claims" >&2
+            exit 1
+          fi
+          echo "OK: the interface delta is exactly the screenshot patch"
 
       # Byte-identical says the JavaScript is the same. This says the
       # PACKAGE is. Without it, a meson option that quietly stopped
@@ -276,13 +293,35 @@ jobs:
       # LayoutManager — without it, it dies in JavaScript before it
       # would own a bus name. The mock stands in for the environment;
       # the binary, the compositor and the JavaScript are the real ones.
-      - name: It boots
+      - name: It boots, and it can photograph its own screen
         run: |
           ver=$(sed -n 's/^pkgver=//p' desktop/PKGBUILD)
+          # The screenshot gate authorises by the CALLER'S EXECUTABLE:
+          # a regular file directly inside /usr/lib/lisa/bin, owned by
+          # uid 0, not group/other-writable (lisa-os#266). The image
+          # installs the Lisa CLI there; this container has no Lisa CLI,
+          # so the controls use gdbus — the SAME binary at three
+          # locations, which is what makes them controls rather than
+          # three unrelated tests:
+          #
+          #   /usr/bin/gdbus                        refused (wrong dir)
+          #   /usr/lib/lisa/bin/probe, root-owned   allowed
+          #   /usr/lib/lisa/bin/probe-unowned       refused (not uid 0)
+          #
+          # Nothing here weakens the gate: it is compiled into the shell
+          # and reads /proc/<pid>/exe. Placing a binary at the
+          # authorised path already requires root, which is the point —
+          # on a real device that directory is the read-only OS image.
+          install -Dm755 -o root -g root /usr/bin/gdbus /usr/lib/lisa/bin/probe
+          install -Dm755 -o builder /usr/bin/gdbus /usr/lib/lisa/bin/probe-unowned
+          ls -l /usr/lib/lisa/bin/
           # Run as a normal user: a compositor started by root in a
           # container is not the situation this ships into.
           chmod 0755 /home/builder
-          su builder -c "LISA_SMOKE_MOCK_LOGIND=1 LISA_SMOKE_TIMEOUT=120 bash $PWD/desktop/smoke.sh $ver"
+          su builder -c "LISA_SMOKE_MOCK_LOGIND=1 LISA_SMOKE_TIMEOUT=120 \
+            LISA_SMOKE_GATE_PROBE=/usr/lib/lisa/bin/probe \
+            LISA_SMOKE_GATE_PROBE_UNOWNED=/usr/lib/lisa/bin/probe-unowned \
+            bash $PWD/desktop/smoke.sh $ver"
 
       - uses: actions/upload-artifact@v4
         with:
